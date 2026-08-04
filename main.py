@@ -1,14 +1,18 @@
-from typing import Optional
-
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 app = FastAPI()
 
 
+class NameRequest(BaseModel):
+    name: str
+
+
 @app.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "Hello Ruben, im from the root."}
 
-@app.get("/items/{item_id}")
-def read_item(item_id: int, q: Optional[str] = None):
-    return {"item_id": item_id, "q": q}
+
+@app.post("/greet")
+def greet(request: NameRequest):
+    return {"message": f"Hi {request.name}, im from the /greet endpoint"}
