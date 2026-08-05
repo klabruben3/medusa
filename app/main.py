@@ -1,7 +1,7 @@
 from typing import List
 from fastapi import FastAPI, UploadFile, File as FastAPIFile
 from fastapi.middleware.cors import CORSMiddleware
-from actions import extract_document_info
+from .utils import extract_document_info, extract_modules
 
 app = FastAPI()
 
@@ -15,7 +15,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-async def process_documents(files: list[UploadFile]):
+
+async def process_documents(files: list[UploadFile]) -> str:
     output_text = ""
     for upload in files:
         filename = upload.filename
@@ -40,8 +41,11 @@ async def root():
 async def main(
     files: List[UploadFile] = FastAPIFile(...),
 ):
-    result = await process_documents(files)
+    document_text = await process_documents(files)
 
-    print(result)
+    modules = extract_modules()
 
-    return {"message": "we got your documents"}
+    print(f"Modules found: \n{modules}")
+    print(f"document text: \n{document_text}")
+
+    return {"modules": modules}

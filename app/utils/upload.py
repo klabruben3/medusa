@@ -1,7 +1,6 @@
 import pdfplumber
 from typing import BinaryIO
 
-
 def page_to_blocks(page):
     blocks = []
 
