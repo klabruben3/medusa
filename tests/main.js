@@ -1,13 +1,25 @@
-const response = await fetch("http://localhost:3000/greet", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    name: "Ruben",
-  }),
-});
+const submitFilesToBackend = async () => {
+  // Only transmit files containing a 'valid' status filter
+  const targetsToUpload = files.filter((f) => f.status === "valid");
+  if (targetsToUpload.length === 0) return;
 
-const data = await response.json();
+  const formData = new FormData();
 
-console.log(data.message);
+  targetsToUpload.forEach((item) => {
+    formData.append("file_binaries", item.file);
+  });
+
+  try {
+    const response = await fetch("http://localhost:3000/upload-modules", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (response.ok) {
+      console.log("Files successfully ingested by FastAPI");
+      console.log(response.message)
+    }
+  } catch (error) {
+    console.error("Transmission breakdown:", error);
+  }
+};
