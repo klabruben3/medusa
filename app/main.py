@@ -44,9 +44,8 @@ async def main(
 ):
     document_text = await process_documents(files)
 
-    # modules = extract_modules()
+    modules = extract_modules()
 
-    # print(f"Modules found: \n{modules}")
     print(f"document text: \n{document_text}")
 
-    # return {"modules": modules}
+    return {"modules": modules}
