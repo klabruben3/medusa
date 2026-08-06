@@ -23,12 +23,12 @@ async def process_documents(files: list[UploadFile]) -> str:
         filename = upload.filename
         content_type = upload.content_type
 
-        output_text += f"--- {filename} ({content_type}) ---"
+        output_text += f"--- {filename} ({content_type}) ---\n"
 
         if content_type == "application/pdf":
-            output_text += "\n" + extract_document_info(upload.file) + "\n"
+            output_text += extract_document_info(upload.file) + "\n"
         elif content_type.startswith("image/"):
-            output_text += "\n--- placeholder for text extracted for an image upload ---\n"
+            output_text += "--- placeholder for text extracted for an image upload ---\n"
 
     return output_text
 
@@ -44,9 +44,9 @@ async def main(
 ):
     document_text = await process_documents(files)
 
-    modules = extract_modules()
+    # modules = extract_modules()
 
-    print(f"Modules found: \n{modules}")
+    # print(f"Modules found: \n{modules}")
     print(f"document text: \n{document_text}")
 
-    return {"modules": modules}
+    # return {"modules": modules}
