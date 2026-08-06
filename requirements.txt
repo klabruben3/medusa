@@ -2,3 +2,4 @@ fastapi[all]
 python-dotenv
 pdfplumber
 groq
+langdetect
