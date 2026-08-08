@@ -1,4 +1,4 @@
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Tuple, TypedDict
 from pydantic import BaseModel, Field
 
 AssessmentType = Literal[
@@ -106,5 +106,10 @@ class Module(BaseModel):
     color: Optional[str] = None
     addedYear: int
 
-class ModuleList(BaseModel):
-    modules: List[Module]
+class Block(TypedDict):
+    content: str
+    bbox: Tuple[float, float, float, float]
+    top: float
+
+
+# exports: Module, CategoryType, Block

@@ -1,7 +1,10 @@
 from typing import List
 from fastapi import FastAPI, UploadFile, File as FastAPIFile
 from fastapi.middleware.cors import CORSMiddleware
-from .utils import extract_document_info, extract_modules
+from .types.schema import Block
+from .utils import extract_document_info
+from .ai.generate_module import create_module
+import uuid
 
 app = FastAPI()
 
@@ -17,20 +20,19 @@ app.add_middleware(
 )
 
 
-async def process_documents(files: list[UploadFile]) -> str:
-    output_text = ""
+async def process_documents(files: list[UploadFile]):
+    blocks: list[Block] = []
+    ingestion_id = str(uuid.uuid4())
+
     for upload in files:
-        filename = upload.filename
         content_type = upload.content_type
 
-        output_text += f"--- {filename} ({content_type}) ---\n"
-
         if content_type == "application/pdf":
-            output_text += extract_document_info(upload.file) + "\n"
+            blocks.extend(extract_document_info(upload))
         elif content_type.startswith("image/"):
-            output_text += "--- placeholder for text extracted for an image upload ---\n"
+            print("--- placeholder for text extracted from an image upload ---")
 
-    return output_text
+    return await create_module(blocks, ingestion_id)
 
 
 @app.get("/")
@@ -42,10 +44,6 @@ async def root():
 async def main(
     files: List[UploadFile] = FastAPIFile(...),
 ):
-    document_text = await process_documents(files)
+    module = await process_documents(files)
 
-    modules = extract_modules()
-
-    print(f"document text: \n{document_text}")
-
-    return {"modules": modules}
+    return {"module": module}

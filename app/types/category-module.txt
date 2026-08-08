@@ -1,0 +1,38 @@
+Module
+│
+├── metadata
+│   ├── moduleId
+│   ├── code
+│   └── name
+│
+├── lecturer_details
+│   ├── lecturer
+│   ├── email
+│   ├── office
+│   └── consultationHours
+│
+├── groups
+│   └── groups
+│
+├── assessment
+│   └── assessments
+│
+├── formulas
+│   └── participationFormula
+│
+├── requirements
+│   └── passRequirements
+│
+├── examination
+│   ├── hasExam
+│   ├── examDate
+│   ├── examDateEnd
+│   ├── examOpportunities
+│   └── examInfo
+│
+└── important_dates
+    ├── semesterStart
+    ├── semesterEnd
+    └── recessPeriods
+
+8 categories === 8 AI models
