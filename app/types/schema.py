@@ -58,6 +58,7 @@ class ExamOpportunity(BaseModel):
     end: str
 
 class ExamPaper(BaseModel):
+    id: Optional[str] = None
     name: str
     maxScore: float
     duration: str
@@ -83,7 +84,15 @@ class RecessPeriod(BaseModel):
     end: str
     label: Optional[str] = None
 
+class FinalMarkFormula(BaseModel):
+    participationWeight: float = Field(ge=0, le=100)
+    examWeight: float = Field(ge=0, le=100)
+
+
 class Module(BaseModel):
+    """Unsaved client-shaped draft; identity is assigned by the database."""
+    id: Literal[""] = ""
+    isPinned: bool = False
     moduleId: str
     code: str
     name: str
@@ -95,6 +104,7 @@ class Module(BaseModel):
     assessments: List[AssessmentComponent] = Field(default_factory=list)
     participationFormula: ParticipationFormula
     passRequirements: Optional[PassRequirements] = None
+    finalMarkFormula: Optional[FinalMarkFormula] = None
     semesterStart: str
     semesterEnd: str
     hasExam: bool
@@ -103,13 +113,18 @@ class Module(BaseModel):
     examOpportunities: Optional[List[ExamOpportunity]] = None
     examInfo: Optional[ExamInfo] = None
     recessPeriods: Optional[List[RecessPeriod]] = None
-    color: Optional[str] = None
+    color: str = "#6366f1"
     addedYear: int
 
 class Block(TypedDict):
     content: str
     bbox: Tuple[float, float, float, float]
     top: float
+
+
+class ExtractionResult(BaseModel):
+    module: Module
+    warnings: List[str] = Field(default_factory=list)
 
 
 # exports: Module, CategoryType, Block

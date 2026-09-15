@@ -12,7 +12,7 @@ categories = [
         "query": "What information describes groups, classes, group numbers, lecture groups, practical groups, tutorial groups, or how students are assigned to groups?"
     },
     {
-        "category": "assessment",
+        "category": "assessments",
         "query": "What tests, assignments, projects, practicals, tutorials, assessments, or other graded activities are mentioned, including their names, dates, weighting, marks, or requirements?"
     },
     {
