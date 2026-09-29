@@ -1,10 +1,10 @@
-fastapi[all]
+fastapi[all]==0.141.1
 python-dotenv
 pdfplumber
-groq
+groq==1.7.0
 langdetect
-voyageai
-chromadb
+voyageai==0.5.0
+chromadb==1.5.9
 pytesseract==0.3.13
 httpx==0.28.1
 reportlab>=4,<5

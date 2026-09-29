@@ -2,8 +2,21 @@ services:
   # A Docker web service
   - type: web
     name: academiq-api
-    runtime: python
+    runtime: docker
     plan: free
     autoDeploy: true
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: MAX_CONCURRENT_EXTRACTIONS
+        value: "1"

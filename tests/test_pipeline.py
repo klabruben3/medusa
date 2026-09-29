@@ -83,6 +83,9 @@ class DocumentTests(unittest.TestCase):
 class EndpointTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
+        auth = patch("app.main.authorize", new=AsyncMock(return_value="test-user"))
+        auth.start()
+        self.addCleanup(auth.stop)
 
     def test_success_contract(self):
         result = ExtractionResult(module=sample())
@@ -105,32 +108,23 @@ class EndpointTests(unittest.TestCase):
 
 
 class GenerationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_repairs_invalid_reference_and_strips_student_state(self):
-        bad = sample()
-        bad.participationFormula.components[0].componentId = "missing"
-        good = sample()
-        good.assessments[0].score = 33
-        good.assessments[0].completed = True
-        def response(module):
-            return SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=ExtractionResult(module=module).model_dump_json()))])
+    async def test_repairs_invalid_worker_schema(self):
+        import json
+        from app.ai.generate_module import run_worker
+        def response(value):
+            return SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(value)))])
         client = AsyncMock()
-        client.chat.completions.create.side_effect = [response(bad), response(good)]
-        manager = AsyncMock()
-        manager.__aenter__.return_value = client
-        with patch.dict("os.environ", {"GROQ_API_KEY": "test"}), patch("app.ai.generate_module.AsyncGroq", return_value=manager):
-            result = await create_module([{"filename": "plan", "text": "source"}])
+        client.chat.completions.create.side_effect = [response({"code": 123}), response({"code": "ABC123", "name": "Example"})]
+        result = await run_worker(client, "identity", [])
         self.assertEqual(client.chat.completions.create.await_count, 2)
-        self.assertIsNone(result.module.assessments[0].score)
-        self.assertIsNone(result.module.assessments[0].completed)
+        self.assertEqual(result.code, "ABC123")
 
     async def test_truncated_model_response_is_not_success(self):
         client = AsyncMock()
         client.chat.completions.create.return_value = SimpleNamespace(choices=[SimpleNamespace(finish_reason="length", message=SimpleNamespace(content="{}"))])
-        manager = AsyncMock()
-        manager.__aenter__.return_value = client
-        with patch.dict("os.environ", {"GROQ_API_KEY": "test"}), patch("app.ai.generate_module.AsyncGroq", return_value=manager):
-            with self.assertRaises(DocumentError):
-                await create_module([])
+        from app.ai.generate_module import run_worker
+        with self.assertRaises(DocumentError):
+            await run_worker(client, "identity", [])
 
 
 if __name__ == "__main__":

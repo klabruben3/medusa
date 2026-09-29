@@ -1,568 +1,142 @@
 # Medusa
 
-**Medusa is Academiq's document-to-module extraction service.**
+Academiq's existing FastAPI document-to-module service. Extraction returns an
+unsaved draft; only the user's explicit save in Academiq's ModuleEditor creates
+or updates a Supabase user_modules row.
 
-It processes university study guides and related academic documents and converts their contents into a structured **Academiq Module draft** that can be reviewed before being saved by the frontend.
+## Flow
 
-Medusa exists to bridge the gap between:
-
-```text
-University document
-        ↓
-PDF / DOCX / image
-        ↓
-Academic information
-        ↓
-Structured Academiq module
+```
+Academiq File objects + Supabase access token
+  → multipart POST /process-documents
+  → verify registered user + existing consume_ai_quota RPC
+  → validate files → native PDF text / tables / selective OCR / DOCX
+  → ordered blocks with source, page, type, origin and position
+  → private in-memory Chroma collection + Voyage embeddings
+  → identity / grading / calendar retrieval
+  → delete collection in finally
+  → three focused Groq calls → deterministic merge + validation
+  → {module, warnings} → user review → existing editor save
 ```
 
-The service does **not** write student academic records directly.
+Medusa does not expose permanent file storage or accept browser paths/URLs.
+Academiq's separate R2 `{key,url}` upload flow serves profile/support uploads;
+extraction preserves the existing temporary multipart contract. Starlette may spool
+large uploads to temporary files during a request; request cleanup closes/deletes
+them on completion or failure. Chroma has no persistent path, uses a unique
+collection per extraction, and disables its analytics telemetry. No source text,
+embeddings, OCR output or documents are saved by the extraction service.
 
-Its responsibility ends at producing a validated, unsaved module draft and identifying information that still requires human review.
-
----
-
-## Purpose
-
-University module information is often distributed through documents designed for humans rather than software.
-
-A study guide may contain:
-
-* Module metadata
-* Lecturer information
-* Contact details
-* Student groups
-* Assessment schedules
-* Assessment weights
-* Participation formulas
-* Pass requirements
-* Examination information
-* Important academic dates
-* Tables
-* Bilingual content
-
-Medusa converts that information into the structured format expected by Academiq.
-
-The goal is not merely to extract text.
-
-The goal is to understand enough of the document's academic structure to construct a usable module definition.
-
----
-
-## Processing Flow
-
-At a high level:
-
-```text
-Uploaded documents
-        │
-        ▼
-File validation
-        │
-        ▼
-Text / table / OCR extraction
-        │
-        ▼
-Combined document context
-        │
-        ▼
-LLM structured extraction
-        │
-        ▼
-Schema + academic validation
-        │
-        ├── valid facts
-        │
-        ├── missing information
-        │
-        └── review warnings
-        ▼
-Unsaved Academiq Module
-        │
-        ▼
-User review
-        │
-        ▼
-Academiq frontend saves module
-```
-
-Medusa deliberately keeps **extraction** separate from **persistence**.
-
----
+Voyage receives document blocks for embeddings and Groq receives relevant retrieved
+blocks. Provider processing/retention terms still apply; local deletion is not a
+promise about third-party retention. No real student documents are used in tests.
 
 ## API
 
-### `POST /process-documents`
+`POST /process-documents` uses multipart fields named `files` and
+`Authorization: Bearer <Supabase access token>`. The token is verified against the
+configured Supabase project and the existing per-user AI quota is consumed. Anonymous
+users are rejected. CORS is not authentication. `GET /` is a public health check.
 
-Processes one or more files describing a **single academic module**.
+Success returns `{module: <camelCase Module draft>, warnings: string[]}`.
+`module.id` is empty; scores/completion and pin state cannot be imported.
+Errors return `{detail: <safe message>, code: <stable category>}`. Categories include
+unauthorized, account_limit, unsupported_file, empty_document, encrypted_pdf,
+ocr_failed, file_too_large, conflicting_sources, invalid_output, invalid_grading,
+provider_error, rate_limited, timeout and processing_error. No validation input
+values, internal paths or exception traces are returned.
 
-The request uses `multipart/form-data` with one or more `files` fields.
+Limits: 10 files, 50 MiB/file, 100 MiB combined, 100 PDF pages, 180,000 extracted
+characters, 12,000 characters per intact block, 48,000 characters per worker context,
+25 million pixels per raster image. Oversized structured tables/contexts fail rather
+than being silently truncated. Multipart parsing also bounds actual streamed bytes.
 
-Example response:
+## Document handling
 
-```json
-{
-  "module": {
-    "id": "",
-    "code": "MTHS121",
-    "name": "Mathematics 121"
-  },
-  "warnings": [
-    "Examination date could not be determined from the supplied documents."
-  ]
-}
+PDF pages use pdfplumber native extraction. Table cells stay in ordered row arrays,
+including empty cells; their text is excluded from prose. Pages lacking usable text
+use Tesseract. Mixed pages OCR relevant image regions, skipping small decorative
+assets and full-page backgrounds already covered by native text. Native prose is
+conservatively sentence-split; headings, lists, math and structured metadata remain
+intact. OCR column layouts are retained as table blocks when detectable; this is
+heuristic layout preservation, not guaranteed scanned-table cell recognition.
+
+PNG/JPEG use the same OCR normalization. DOCX paragraphs, tables and embedded images
+remain supported; page 0 means page number unavailable. Source order is approximate
+for complex multi-column layouts and DOCX embedded images. Bilingual text is retained.
+
+## Workers and models
+
+Worker schemas are selected from `app/types/schema.py:Module` in `ai/partials.py`:
+
+* Identity: module code/name and teaching contacts/groups.
+* Grading: assessments (including their dates), formula references, pass requirements,
+  final-mark split, hasExam and exam papers. Linked facts remain in one worker.
+* Calendar: semester, recess and exam-opportunity dates.
+
+The frontend source of truth remains Academiq `types/index.ts`. `Module` includes
+its optional `dataNote`; application-owned fields never come from a worker.
+Each worker has a small purpose-specific retrieval query group. Results retain
+provenance and neighboring context. Only normalized exact duplicates are removed;
+similar passages with different numbers/dates must remain available as conflicts.
+Retrieval cannot guarantee exhaustive recall; the UI explicitly requires review.
+
+The default Groq model remains `openai/gpt-oss-20b`. All workers inherit
+GROQ_MODULE_MODEL unless their own override is configured. The unused legacy formula
+worker's `openai/gpt-oss-safeguard-20b` remains untouched; it is not silently adopted.
+Voyage's default remains `voyage-4-lite`. Workers execute sequentially to avoid bursts;
+Groq has one SDK retry and workers have one schema-repair attempt. Inconsistent
+merged academic rules fail explicitly rather than being fixed by inventing facts.
+
+Legacy `categorize.py`, `chroma_connection.py`, `workers.py` and language-filtering
+helpers are not called by the endpoint. In particular, the shared cloud
+`document_chunks` collection and its CHROMA_* credentials are not used. Existing
+cloud data is not deleted by this change.
+
+## Configuration and deployment
+
+Required Medusa environment variables:
+
+```
+GROQ_API_KEY=...
+VOYAGE_API_KEY=...
+SUPABASE_URL=https://<the-same-project-as-academiq>.supabase.co
+SUPABASE_ANON_KEY=<publishable-or-anon-key>
+CORS_ORIGINS=https://<academiq-origin>,http://localhost:3000
 ```
 
-The returned module uses Academiq's camelCase module structure.
+Optional: GROQ_MODULE_MODEL, GROQ_IDENTITY_MODEL, GROQ_GRADING_MODEL,
+GROQ_CALENDAR_MODEL, VOYAGE_EMBEDDING_MODEL, OCR_LANGUAGES, TESSERACT_CMD,
+MAX_CONCURRENT_EXTRACTIONS (default 2; Render blueprint uses 1).
+No service-role key is required. Quotas are shared with Iris using the existing
+`consume_ai_quota` migration/RPC. Per-instance admission also allows only one job
+per user; multiple instances still share the database quota.
 
-`id` is intentionally returned as an empty string.
+Academiq requires NEXT_PUBLIC_ACADEMIQ_API_URL pointing to this service; its import
+entry point stays disabled in production without this configuration. Development
+defaults to http://localhost:3001. Neither repository's local secrets are changed.
 
-Medusa does not create the corresponding `user_modules` record. The Academiq frontend saves the reviewed draft and Supabase assigns the persistent database UUID.
+`render.yaml` selects the existing Dockerfile, which installs Tesseract and English/
+Afrikaans language data. Set secrets in Render, rebuild Academiq with its public API
+URL, and verify OCR in the deployed image. Chroma is used as bounded in-process
+working memory, not a persistent production database; size/concurrency limits may
+need lowering on a small Render plan. No service was deployed by this change.
 
----
-
-## Supported Documents
-
-Medusa currently accepts:
-
-* **PDF**
-* **DOCX**
-* **PNG**
-* **JPEG**
-
-Multiple files may be uploaded when they describe the same module.
-
-For example:
-
-```text
-Study guide.pdf
-Assessment plan.pdf
-Exam information.pdf
 ```
-
-may be processed together if they all belong to the same module.
-
-A single request should **not** contain documents for unrelated modules.
-
----
-
-## OCR
-
-Image-based documents and scanned PDF content require OCR.
-
-Medusa uses **Tesseract** for local optical character recognition.
-
-The deployment environment must provide:
-
-* The Tesseract executable
-* Required language data
-
-English OCR is the default.
-
-Additional configured languages require their corresponding language packs.
-
-For example:
-
-```text
-OCR_LANGUAGES=eng+afr
-```
-
-requires both English and Afrikaans Tesseract data to exist on the host.
-
-If OCR is required but unavailable, Medusa returns an error rather than pretending that unreadable content was successfully extracted.
-
-This is intentional.
-
-> **Missing text is safer than fabricated academic information.**
-
----
-
-## Extraction Principles
-
-Medusa follows several rules intended to make generated module data safer and easier to review.
-
-### Never invent student data
-
-The service never creates:
-
-* Student marks
-* Completion state
-* Assessment results
-* Personal academic progress
-
-Medusa extracts **module structure**, not student performance.
-
----
-
-### Missing information remains missing
-
-If a date, location, lecturer detail, or similar value cannot be determined reliably, it should remain empty and generate a review warning where appropriate.
-
-The model should not create plausible-looking replacements.
-
----
-
-### Academic rules must be explicit
-
-Important grading information should only be represented when supported by the source documents.
-
-This includes concepts such as:
-
-* Assessment weights
-* Minimum participation requirements
-* Dropped assessments
-* Required assessment counts
-* Category weighting
-* Examination requirements
-* Final-mark formulas
-
-A phrase such as:
-
-```text
-Best 3 of 4 tests count
-```
-
-has a very different meaning from:
-
-```text
-Complete at least 3 tests
-```
-
-The extraction layer must preserve that distinction.
-
----
-
-### Zero is different from missing
-
-Academic values must preserve semantic differences between:
-
-```text
-0
-```
-
-and:
-
-```text
-unknown / absent
-```
-
-This is particularly important once extracted module structures reach Academiq's calculation systems.
-
----
-
-### Human review is mandatory
-
-A successful extraction means:
-
-> **The module draft passed Medusa's structural validation.**
-
-It does **not** mean:
-
-> **Every extracted fact is guaranteed to be correct.**
-
-LLM-based extraction can make mistakes.
-
-Users must review the resulting module before saving it into their academic workspace.
-
----
-
-## Validation
-
-Medusa validates extracted output before returning it to Academiq.
-
-Important academic information that is required to construct a valid grading model may cause extraction to fail when it cannot be established safely.
-
-Less critical missing information can remain empty and produce warnings instead.
-
-Conceptually:
-
-```text
-Extracted information
-        │
-        ├── Required + valid ────────► accept
-        │
-        ├── Optional + missing ──────► warning
-        │
-        └── Required + unreliable ───► reject
-```
-
-This prevents malformed grading structures from silently entering Academiq.
-
----
-
-## Request Limits
-
-The service enforces input limits before generation.
-
-Current limits include:
-
-* Maximum **10 files**
-* Maximum **50 MB per file**
-* Maximum **100 MB combined upload**
-* Maximum **100 pages per PDF**
-* Maximum **180,000 extracted characters**
-
-Requests exceeding these limits are rejected rather than silently truncated.
-
-Academic extraction depends on having the full relevant context. Quietly removing part of a study guide could create a structurally valid but factually incomplete module.
-
----
-
-## Tables & Bilingual Content
-
-Extracted content is not limited to plain paragraphs.
-
-Relevant source material can include:
-
-* Tables
-* Structured assessment schedules
-* Mixed formatting
-* English content
-* Afrikaans content
-* Bilingual academic material
-
-The complete extracted context is supplied to the module-generation stage within the request limits.
-
----
-
-## Generation
-
-Structured module extraction currently uses **Groq**.
-
-Required environment configuration:
-
-```text
-GROQ_API_KEY
-```
-
-The generation model can optionally be configured with:
-
-```text
-GROQ_MODULE_MODEL
-```
-
-Default:
-
-```text
-openai/gpt-oss-20b
-```
-
-The generation layer is responsible for transforming extracted document content into Academiq's module schema.
-
----
-
-## Legacy Retrieval Pipeline
-
-Earlier versions of Medusa explored a more elaborate document-processing architecture using:
-
-* VoyageAI embeddings
-* ChromaDB
-* Document chunk categorization
-* Retrieval-based extraction
-
-Those helpers may still exist in the repository.
-
-They are **not part of the current `/process-documents` production path**.
-
-The active extraction path currently depends primarily on:
-
-```text
-Document extraction
-      +
-Local OCR when required
-      +
-Groq structured generation
-```
-
-The older Voyage/Chroma work remains useful as an experiment and may become relevant again if Academiq later needs retrieval across larger academic document collections.
-
----
-
-## Academiq Integration
-
-Medusa is a supporting service for Academiq rather than a standalone student application.
-
-The frontend points to the deployed service using:
-
-```text
-NEXT_PUBLIC_ACADEMIQ_API_URL
-```
-
-For local development, the expected backend origin defaults to:
-
-```text
-http://localhost:3001
-```
-
-The frontend should treat Medusa's output as a **draft**.
-
-The expected product flow is:
-
-```text
-Upload documents
-      ↓
-Medusa extraction
-      ↓
-Review module draft
-      ↓
-User corrects anything necessary
-      ↓
-Save to Academiq
-```
-
-Medusa never bypasses this review step by writing directly to student records.
-
----
-
-## Service Boundary
-
-Medusa owns:
-
-* Document validation
-* Text extraction
-* OCR
-* Academic information extraction
-* Module-schema construction
-* Extraction warnings
-* Structural validation
-
-Medusa does **not** own:
-
-* Academiq authentication state
-* Student marks
-* Student progress
-* Module persistence
-* Template administration
-* Assessment synchronization
-* Academic calculations
-* Iris conversations
-
-Keeping this boundary narrow allows the extraction service to evolve independently from the main Academiq application.
-
----
-
-## Technology
-
-The service is built primarily with:
-
-* **Python**
-* **FastAPI**
-* **Uvicorn**
-* **Groq**
-* **Tesseract OCR**
-* PDF and DOCX extraction tooling
-
-Legacy experiments also include:
-
-* **VoyageAI**
-* **ChromaDB**
-
----
-
-## Local Development
-
-Install the required Python dependencies and start the API with:
-
-```bash
+pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 3001
-```
-
-At minimum, configure:
-
-```text
-GROQ_API_KEY
-```
-
-Optional service configuration includes:
-
-```text
-GROQ_MODULE_MODEL
-CORS_ORIGINS
-TESSERACT_CMD
-OCR_LANGUAGES
-```
-
-If Tesseract is not available through the system `PATH`, `TESSERACT_CMD` should point to the executable.
-
----
-
-## Testing
-
-Run the offline test suite with:
-
-```bash
 python -m unittest discover -s tests -p "test_*.py"
-```
-
-Development/test dependencies are defined separately in:
-
-```text
-requirements-dev.txt
-```
-
-A live generation smoke test is also available:
-
-```bash
 python -m tooling.smoke_generation
 ```
 
-Unlike the offline tests, the smoke test makes a real request to the configured Groq provider and therefore requires a valid API key.
+The test suite mocks external providers but exercises real PDF parsing and local
+Chroma insertion/query/deletion, concurrent isolation, cancellation and invalid output.
+The smoke tool sends synthetic facts to Voyage and Groq and requires both keys.
+Structured stage logs contain counts, durations and random job IDs only.
 
----
-
-## Deployment
-
-Medusa can run as a separate service from the Academiq frontend.
-
-The current deployment architecture keeps:
-
-```text
-Academiq
-Next.js / Vercel
-       │
-       │ HTTP
-       ▼
-Medusa
-FastAPI service
-       │
-       ├── Document extraction
-       ├── Tesseract
-       └── Groq
-```
-
-The deployment environment must provide Tesseract separately when OCR functionality is required.
-
-For platforms such as Render, this may require a container or system configuration that explicitly installs the Tesseract executable and the required language packs.
-
-OCR should be verified in the deployed environment before document uploads are enabled for users.
-
----
-
-## Current Status
-
-Medusa is an active Academiq subsystem, but document import is still treated as a **deferred production feature** in the main application.
-
-The extraction pipeline exists and continues to be developed, but Academiq should not expose document import as a fully trusted workflow until:
-
-* OCR works reliably in production
-* Academic extraction is sufficiently consistent
-* Validation covers the required module structures
-* Failure states are clear
-* Review workflows are reliable
-* Real university documents have been tested across enough formats
-
-The objective is not simply to make document import work.
-
-The objective is to make it **safe enough that students can trust the academic structures it produces**.
-
----
-
-## Design Principle
-
-Medusa is built around one principle:
-
-> **Extract what the document says. Preserve what is unknown. Never make academic uncertainty look like certainty.**
-
-A module can always be corrected during review.
-
-A confidently fabricated grading rule is much harder to detect.
+Cancellation waits for any synchronous document/retrieval operation to release its
+resources before returning. A 240-second timeout can therefore include extra cleanup
+time (including a bounded in-flight provider/OCR operation). Collection cleanup runs
+before generation, so model errors, invalid JSON and timeouts cannot leave a collection.
+An abrupt process termination also loses the in-memory collection; local upload-temp
+cleanup after an OS/container failure is the hosting runtime's responsibility.

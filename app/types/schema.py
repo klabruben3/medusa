@@ -1,5 +1,9 @@
 from typing import List, Optional, Literal, Tuple, TypedDict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel as PydanticBaseModel, Field, ConfigDict
+
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
 
 AssessmentType = Literal[
     "weekly-test", "class-test", "semester-test", "exam", "assignment",
@@ -115,11 +119,22 @@ class Module(BaseModel):
     recessPeriods: Optional[List[RecessPeriod]] = None
     color: str = "#6366f1"
     addedYear: int
+    dataNote: Optional[str] = None
 
 class Block(TypedDict):
     content: str
     bbox: Tuple[float, float, float, float]
     top: float
+
+
+class DocumentBlock(TypedDict):
+    id: str
+    type: str
+    content: str
+    page: int
+    order: int
+    source_file: str
+    metadata: dict
 
 
 class ExtractionResult(BaseModel):
