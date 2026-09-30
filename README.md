@@ -1,5 +1,13 @@
 # Medusa
 
+Evidence routing now returns source IDs and categories only. Python copies the
+original section text, including table formatting, into the assembly context.
+The model no longer has to reproduce exact quotes. Coverage still requires one
+decision for every supplied ID; unknown/duplicate IDs are rejected. Failed retries
+log a safe reason code and return `evidence_classification_failed`, not a claim
+that the document is unclear. Retaining whole selected sections may still reach
+the existing assembly token budget; that limit remains explicit.
+
 ## Revised extraction path (September 30)
 
 The default pipeline now reads every normalized section in bounded batches, extracts

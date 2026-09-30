@@ -234,9 +234,7 @@ class SecurityTests(unittest.TestCase):
             schema_name = kwargs["response_format"]["json_schema"]["name"]
             if schema_name == "EvidenceExtraction":
                 blocks = json.loads(kwargs["messages"][1]["content"])
-                value = {"reviewedBlockIds": [b["id"] for b in blocks], "facts": [
-                    {"blockId": b["id"], "purpose": purpose, "quote": b["content"]}
-                    for b in blocks for purpose in FIELDS]}
+                value = {"decisions": [{"blockId": b["id"], "purposes": list(FIELDS)} for b in blocks]}
                 content = json.dumps(value)
             else:
                 content = values[schema_name.removesuffix("Extraction").lower()].model_dump_json()

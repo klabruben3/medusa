@@ -38,28 +38,44 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         async def answer(client, purpose, messages, schema, output_tokens):
             blocks = json.loads(messages[1]["content"])
             reviewed.extend(b["id"] for b in blocks)
-            return response({"reviewedBlockIds": [b["id"] for b in blocks], "facts": [
-                {"blockId": b["id"], "purpose": "grading", "quote": b["content"]} for b in blocks]})
+            return response({"decisions": [{"blockId": b["id"], "purposes": ["grading"]} for b in blocks]})
         sources = [{"filename": "plan.txt", "text": "\n\n".join(f"Test {i} has 40 marks." for i in range(300))}]
         with patch("app.ai.evidence.complete", side_effect=answer):
             contexts, notes = await collect_evidence(None, sources)
         self.assertEqual(set(reviewed), {b["id"] for b in sections(sources)})
         self.assertTrue(any("Test 299" in b["content"] for b in contexts["grading"]))
 
-    async def test_invented_quote_and_missing_coverage_fail_closed(self):
+    async def test_unknown_duplicate_and_missing_ids_fail_closed(self):
         blocks = [{"id": "a", "content": "Test: 40 marks", "source_file": "x", "page": 1}]
-        for value in [{"reviewedBlockIds": [], "facts": []},
-                      {"reviewedBlockIds": ["a"], "facts": [{"blockId": "a", "purpose": "grading", "quote": "100 marks"}]}]:
+        for value in [{"decisions": []}, {"decisions": [{"blockId": "invented", "purposes": ["grading"]}]},
+                      {"decisions": [{"blockId": "a", "purposes": []}, {"blockId": "a", "purposes": []}]}]:
             with patch("app.ai.evidence.complete", new=AsyncMock(return_value=response(value))), self.assertRaises(DocumentError):
                 await extract_batch(None, blocks)
 
     async def test_truncation_splits_batch_without_dropping_second_block(self):
         blocks = [{"id": name, "content": "Test " + name, "source_file": "x", "page": 1} for name in ["a", "b"]]
-        responses = [response({}, "length")] + [response({"reviewedBlockIds": [b["id"]], "facts": [
-            {"blockId": b["id"], "purpose": "grading", "quote": b["content"]}]}) for b in blocks]
+        responses = [response({}, "length")] + [response({"decisions": [
+            {"blockId": b["id"], "purposes": ["grading"]}]}) for b in blocks]
         with patch("app.ai.evidence.complete", new=AsyncMock(side_effect=responses)):
             result = await extract_batch(None, blocks)
         self.assertEqual([b["id"] for b in result], ["a", "b"])
+
+    async def test_source_text_is_copied_exactly_including_table_escaping(self):
+        text = 'Toets\u00a01\n40 marks — 25%\n{"rows": [["Assessment", "Weight"], ["Test 1", "25%"]]}'
+        blocks = [{"id": "a", "content": text, "source_file": "x.pdf", "page": 2}]
+        with patch("app.ai.evidence.complete", new=AsyncMock(return_value=response({"decisions": [{"blockId": "a", "purposes": ["grading", "calendar"]}]}))):
+            result = await extract_batch(None, blocks)
+        self.assertEqual(len(result), 2)
+        self.assertTrue(all(item["content"] == text and item["page"] == 2 for item in result))
+
+    async def test_failure_logs_reason_without_source_text(self):
+        blocks = [{"id": "a", "content": "PRIVATE_SOURCE", "source_file": "private.pdf", "page": 1}]
+        with patch("app.ai.evidence.complete", new=AsyncMock(return_value=response({}))), self.assertLogs("app.ai.evidence", level="WARNING") as logs:
+            with self.assertRaises(DocumentError) as caught:
+                await extract_batch(None, blocks, depth=3)
+        self.assertEqual(caught.exception.code, "evidence_classification_failed")
+        self.assertIn("invalid_schema", str(caught.exception))
+        self.assertNotIn("PRIVATE_SOURCE", str(logs.output))
 
 
 class BudgetTests(unittest.IsolatedAsyncioTestCase):
