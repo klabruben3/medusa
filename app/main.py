@@ -27,6 +27,34 @@ PROCESSING_TIMEOUT = 240
 active_jobs = set()
 
 
+def groq_failure(exc, job_id):
+    """Expose actionable diagnostics without provider messages or generated content."""
+    status = getattr(exc, "status_code", None)
+    body = getattr(exc, "body", None)
+    error = body.get("error", body) if isinstance(body, dict) else {}
+    raw_code = error.get("code") if isinstance(error, dict) else None
+    safe_code = raw_code if raw_code in {"json_validate_failed", "model_not_found", "model_decommissioned", "invalid_api_key", "context_length_exceeded"} else "unknown"
+    logger.warning("stage=groq_failed job=%s exception_type=%s upstream_status=%s provider_code=%s",
+                   job_id, type(exc).__name__, status, safe_code)
+    if status == 401 or safe_code == "invalid_api_key":
+        message, code = "Groq rejected Medusa's GROQ_API_KEY. Replace it in Render with a valid Groq API key and redeploy.", "groq_auth_failed"
+    elif status == 403:
+        message, code = "Groq denied access. Check the Groq project's permissions for the configured extraction model.", "groq_access_denied"
+    elif safe_code in {"model_not_found", "model_decommissioned"} or status == 404:
+        message, code = "Groq could not find the requested resource. Check Medusa's GROQ_MODULE_MODEL and worker model overrides.", "groq_model_unavailable"
+    elif safe_code == "json_validate_failed":
+        message, code = "Groq could not generate output matching the module schema. Retry with one document; repeated failures require checking the worker schema and model.", "groq_schema_failed"
+    elif safe_code == "context_length_exceeded" or status == 413:
+        message, code = "The extraction context exceeds the Groq model limit. Try fewer documents.", "groq_context_limit"
+    elif status == 400:
+        message, code = "Groq rejected the extraction request. Check the configured model's support for the JSON schema and token limit.", "groq_request_rejected"
+    elif isinstance(status, int) and status >= 500:
+        message, code = "Groq returned a server error. Try again shortly.", "groq_unavailable"
+    else:
+        message, code = "The Groq request failed. Check Render logs for stage=groq_failed and its upstream status.", "groq_request_failed"
+    return JSONResponse({"detail": message, "code": code}, status_code=502)
+
+
 async def process_documents(files: list[UploadFile], job_id=None):
     if not files or len(files) > MAX_FILES:
         raise DocumentError(f"Upload between 1 and {MAX_FILES} documents.", 413, "file_count")
@@ -117,8 +145,8 @@ async def main(request: Request):
         return JSONResponse({"detail": "The extraction provider is busy. Try again shortly.", "code": "rate_limited"}, status_code=429)
     except (APITimeoutError, TimeoutError):
         return JSONResponse({"detail": "Document processing timed out. Try fewer documents.", "code": "timeout"}, status_code=504)
-    except APIError:
-        return JSONResponse({"detail": "The extraction provider could not complete the request.", "code": "provider_error"}, status_code=502)
+    except APIError as exc:
+        return groq_failure(exc, job_id)
     except Exception as exc:
         # Exception strings and tracebacks can include OCR/source/model data.
         logger.warning("stage=failed job=%s exception_type=%s", job_id, type(exc).__name__)
