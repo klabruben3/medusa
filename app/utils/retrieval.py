@@ -35,7 +35,7 @@ def chroma_client():
 def embedder():
     import voyageai
     if not os.getenv("VOYAGE_API_KEY"):
-        raise DocumentError("The extraction service is not configured.", 503, "not_configured")
+        raise DocumentError("Medusa is missing VOYAGE_API_KEY. Set it in Render.", 503, "missing_voyage_api_key")
     return voyageai.Client(timeout=45, max_retries=1)
 
 

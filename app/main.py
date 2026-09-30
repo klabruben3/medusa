@@ -111,6 +111,7 @@ async def main(request: Request):
             raise DocumentError("The combined upload is too large.", 413, "file_too_large")
         return await asyncio.wait_for(uploaded_documents(request, job_id), timeout=PROCESSING_TIMEOUT)
     except DocumentError as exc:
+        logger.warning("stage=failed job=%s code=%s status=%d", job_id, exc.code, exc.status)
         return JSONResponse({"detail": str(exc), "code": exc.code}, status_code=exc.status)
     except RateLimitError:
         return JSONResponse({"detail": "The extraction provider is busy. Try again shortly.", "code": "rate_limited"}, status_code=429)

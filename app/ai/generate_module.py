@@ -119,7 +119,7 @@ def merge_parts(parts, warnings=()):
 
 async def create_module(sources, ingestion_id=None):
     if not os.getenv("GROQ_API_KEY"):
-        raise DocumentError("The extraction service is not configured.", 503, "not_configured")
+        raise DocumentError("Medusa is missing GROQ_API_KEY. Set it in Render.", 503, "missing_groq_api_key")
     contexts, notes = await blocking_job(retrieve_contexts, sources, ingestion_id)
     # Collection has already been deleted, including before any provider error/timeout.
     # Sequential requests avoid bursting the same model's TPM/RPM allocation.

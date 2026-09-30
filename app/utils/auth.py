@@ -10,11 +10,22 @@ async def authorize(request: Request):
     token = request.headers.get("authorization", "")
     if not token.startswith("Bearer ") or len(token) > 8192:
         raise DocumentError("Sign in to extract a module.", 401, "unauthorized")
-    origin = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_ANON_KEY", "")
-    parsed = urlparse(origin)
-    if not key or parsed.scheme != "https" or not parsed.netloc or parsed.path:
-        raise DocumentError("The extraction service is not configured.", 503, "not_configured")
+    origin = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    key = os.getenv("SUPABASE_ANON_KEY", "").strip()
+    if not origin:
+        raise DocumentError("Medusa is missing SUPABASE_URL. Set it in Render without the NEXT_PUBLIC_ prefix.", 503, "missing_supabase_url")
+    try:
+        parsed = urlparse(origin)
+        valid = (parsed.scheme == "https" and parsed.hostname and not parsed.path
+                 and not parsed.query and not parsed.fragment and not parsed.username
+                 and not parsed.password and not any(c.isspace() for c in origin))
+        parsed.port  # Validate malformed port syntax as well.
+    except ValueError:
+        valid = False
+    if not valid:
+        raise DocumentError("Medusa SUPABASE_URL is invalid. Use only the HTTPS Supabase project origin, without quotes or a path.", 503, "invalid_supabase_url")
+    if not key:
+        raise DocumentError("Medusa is missing SUPABASE_ANON_KEY. Set it in Render without the NEXT_PUBLIC_ prefix.", 503, "missing_supabase_anon_key")
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
             headers = {"Authorization": token, "apikey": key}

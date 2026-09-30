@@ -10,6 +10,25 @@ from app.main import uploaded_documents
 
 
 class AuthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_configuration_errors_before_network_without_leaking_values(self):
+        request = Request({"type": "http", "headers": [(b"authorization", b"Bearer test-token")]})
+        cases = [
+            ({"NEXT_PUBLIC_SUPABASE_URL": "https://example.supabase.co"}, "missing_supabase_url"),
+            ({"SUPABASE_URL": "https://example.supabase.co"}, "missing_supabase_anon_key"),
+        ]
+        for origin in ["https://example.supabase.co/rest/v1", '"https://example.supabase.co"',
+                       "https://example.supabase.co?secret=private", "https://private@example.supabase.co",
+                       "https://[broken", "http://example.supabase.co", "https://example.supabase.co:bad"]:
+            cases.append(({"SUPABASE_URL": origin, "SUPABASE_ANON_KEY": "private-key"}, "invalid_supabase_url"))
+        for env, code in cases:
+            with self.subTest(code=code, env_names=list(env)), patch.dict("os.environ", env, clear=True), patch("app.utils.auth.httpx.AsyncClient") as client:
+                with self.assertRaises(DocumentError) as caught:
+                    await authorize(request)
+                self.assertEqual(caught.exception.code, code)
+                self.assertEqual(caught.exception.status, 503)
+                self.assertNotIn("private", str(caught.exception))
+                client.assert_not_called()
+
     async def auth(self, user_status=200, user=None, quota=True):
         user = user if user is not None else {"id": "verified-owner", "is_anonymous": False}
         client = AsyncMock()
