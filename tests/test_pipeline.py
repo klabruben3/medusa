@@ -45,6 +45,12 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(validate_module(module), [])
         self.assertIsNone(component.dropLowest)
 
+    def test_fractional_or_incomplete_formula_totals_are_rejected(self):
+        module = sample()
+        for weight in (1, 0, 80):
+            module.participationFormula.components[0].weight = weight
+            self.assertTrue(any("total 100" in error for error in validate_module(module)))
+
 
 class DocumentTests(unittest.TestCase):
     def test_pdf_all_pages_and_bilingual_text_retained(self):
@@ -108,6 +114,11 @@ class EndpointTests(unittest.TestCase):
 
 
 class GenerationTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        reservation = patch("app.ai.provider.limiter.reserve", new=AsyncMock())
+        reservation.start()
+        self.addCleanup(reservation.stop)
+
     async def test_repairs_invalid_worker_schema(self):
         import json
         from app.ai.generate_module import run_worker

@@ -6,7 +6,7 @@ from fastapi import Request
 from .documents import DocumentError
 
 
-async def authorize(request: Request):
+async def authorize(request: Request, consume_quota=True):
     token = request.headers.get("authorization", "")
     if not token.startswith("Bearer ") or len(token) > 8192:
         raise DocumentError("Sign in to extract a module.", 401, "unauthorized")
@@ -37,10 +37,11 @@ async def authorize(request: Request):
             if not user.get("id") or user.get("is_anonymous", False):
                 raise DocumentError("Sign in with a registered account to extract modules.", 403, "unauthorized")
             # Reuse Academiq's existing atomic per-user AI quota, including RLS.
-            quota = await client.post(origin + "/rest/v1/rpc/consume_ai_quota", headers=headers, json={})
-            quota.raise_for_status()
-            if quota.json() is not True:
-                raise DocumentError("Your AI request limit has been reached. Try again later.", 429, "account_limit")
+            if consume_quota:
+                quota = await client.post(origin + "/rest/v1/rpc/consume_ai_quota", headers=headers, json={})
+                quota.raise_for_status()
+                if quota.json() is not True:
+                    raise DocumentError("Your AI request limit has been reached. Try again later.", 429, "account_limit")
     except (httpx.HTTPError, ValueError) as exc:
         if isinstance(exc, DocumentError):
             raise

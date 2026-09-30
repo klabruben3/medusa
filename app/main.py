@@ -44,8 +44,10 @@ def groq_failure(exc, job_id):
         message, code = "Groq could not find the requested resource. Check Medusa's GROQ_MODULE_MODEL and worker model overrides.", "groq_model_unavailable"
     elif safe_code == "json_validate_failed":
         message, code = "Groq could not generate output matching the module schema. Retry with one document; repeated failures require checking the worker schema and model.", "groq_schema_failed"
-    elif safe_code == "context_length_exceeded" or status == 413:
+    elif safe_code == "context_length_exceeded":
         message, code = "The extraction context exceeds the Groq model limit. Try fewer documents.", "groq_context_limit"
+    elif status == 413:
+        message, code = "Groq rejected the request size or token allocation. Check the account token limit and Medusa's request budget.", "groq_request_too_large"
     elif status == 400:
         message, code = "Groq rejected the extraction request. Check the configured model's support for the JSON schema and token limit.", "groq_request_rejected"
     elif isinstance(status, int) and status >= 500:
@@ -87,7 +89,7 @@ async def root():
     return {"status": "ok", "service": "academiq-api"}
 
 
-async def uploaded_documents(request, job_id):
+async def uploaded_documents(request, job_id, accept=None):
     # Bound actual streamed bytes, including chunked requests, before multipart spooling.
     received = 0
     async def stream():
@@ -104,6 +106,11 @@ async def uploaded_documents(request, job_id):
         files = form.getlist("files")
         if any(key != "files" or not isinstance(value, UploadFile) for key, value in form.multi_items()):
             raise DocumentError("Submit documents using the files field.", 400, "invalid_request")
+        if accept is not None:
+            result = await accept(files, form)
+            form = None  # The admitted background job now owns and closes the form.
+            parser._files_to_close_on_error = []
+            return result
         return await process_documents(files, job_id)
     except MultiPartException as exc:
         if received > MAX_REQUEST_BYTES:
@@ -155,3 +162,90 @@ async def main(request: Request):
         if admitted:
             active_jobs.discard(owner)
         logger.info("stage=finished job=%s duration_ms=%d", job_id, (monotonic() - started) * 1000)
+
+
+# Single-instance, ephemeral jobs. No source text/results are persisted.
+# A restart intentionally loses jobs; clients retain files and receive an explicit 404.
+extraction_jobs = {}
+JOB_TIMEOUT = 1200
+JOB_TTL = 1800
+
+
+def prune_jobs():
+    now = monotonic()
+    for key, job in list(extraction_jobs.items()):
+        if now - job["created"] > JOB_TTL:
+            if not job["task"].done():
+                job["task"].cancel()
+            del extraction_jobs[key]
+
+
+async def execute_job(job, files, form):
+    try:
+        result = await asyncio.wait_for(process_documents(files, job["id"]), JOB_TIMEOUT)
+        job.update(status="completed", result=result.model_dump(exclude_none=True))
+    except DocumentError as exc:
+        logger.warning("stage=job_failed job=%s code=%s", job["id"], exc.code)
+        job.update(status="failed", error={"detail": str(exc), "code": exc.code, "status": exc.status})
+    except RateLimitError:
+        job.update(status="failed", error={"detail": "Groq's account limit was reached. Retry later.", "code": "rate_limited", "status": 429})
+    except (APITimeoutError, TimeoutError):
+        job.update(status="failed", error={"detail": "Extraction timed out. Try a smaller document set.", "code": "timeout", "status": 504})
+    except APIError as exc:
+        import json
+        response = groq_failure(exc, job["id"])
+        job.update(status="failed", error={**json.loads(response.body), "status": response.status_code})
+    except asyncio.CancelledError:
+        job.update(status="failed", error={"detail": "Extraction was interrupted. Please retry.", "code": "interrupted", "status": 503})
+        raise
+    except Exception as exc:
+        logger.warning("stage=job_failed job=%s exception_type=%s", job["id"], type(exc).__name__)
+        job.update(status="failed", error={"detail": "Document processing failed. Please retry.", "code": "processing_error", "status": 502})
+    finally:
+        await form.close()
+        active_jobs.discard(job["owner"])
+        # Expire without depending on another request arriving to trigger pruning.
+        asyncio.get_running_loop().call_later(JOB_TTL, extraction_jobs.pop, job["id"], None)
+
+
+@app.post("/extractions", status_code=202)
+async def start_extraction(request: Request):
+    owner, transferred, admitted = None, False, False
+    try:
+        owner = await authorize(request, consume_quota=False)
+        prune_jobs()
+        if owner in active_jobs or len(active_jobs) >= int(os.getenv("MAX_CONCURRENT_EXTRACTIONS", "1")) or len(extraction_jobs) >= 100:
+            raise DocumentError("Extraction is busy. Please retry shortly.", 429, "rate_limited")
+        active_jobs.add(owner)
+        admitted = True
+        await authorize(request)  # Charge once, never on polling.
+        job_id = uuid4().hex
+        async def accept(files, form):
+            nonlocal transferred
+            if not files or len(files) > MAX_FILES:
+                raise DocumentError("Upload between 1 and 10 documents.", 413, "file_count")
+            job = {"id": job_id, "owner": owner, "status": "processing", "created": monotonic()}
+            job["task"] = asyncio.create_task(execute_job(job, files, form))
+            extraction_jobs[job_id] = job
+            transferred = True
+            return JSONResponse({"jobId": job_id, "status": "processing"}, status_code=202)
+        return await uploaded_documents(request, job_id, accept=accept)
+    except DocumentError as exc:
+        return JSONResponse({"detail": str(exc), "code": exc.code}, status_code=exc.status)
+    finally:
+        if admitted and not transferred:
+            active_jobs.discard(owner)
+
+
+@app.get("/extractions/{job_id}")
+async def extraction_status(job_id: str, request: Request):
+    try:
+        owner = await authorize(request, consume_quota=False)
+        prune_jobs()
+        job = extraction_jobs.get(job_id)
+        if not job or job["owner"] != owner:
+            raise DocumentError("This extraction expired or the server restarted. Please upload the documents again.", 404, "job_not_found")
+        payload = {key: job[key] for key in ("status", "result", "error") if key in job}
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+    except DocumentError as exc:
+        return JSONResponse({"detail": str(exc), "code": exc.code}, status_code=exc.status)

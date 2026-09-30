@@ -1,5 +1,68 @@
 # Medusa
 
+## Revised extraction path (September 30)
+
+The default pipeline now reads every normalized section in bounded batches, extracts
+verbatim academic evidence, verifies quote provenance and batch coverage, and then
+assembles the Module through identity/grading/calendar schemas and semantic validation.
+This replaces top-k retrieval in the default path. Voyage and Chroma credentials are
+no longer required; the legacy retrieval implementation and its tests remain available.
+Small documents bypass fact selection and pass all sections directly to the workers.
+For historical retrieval tests only, also install `requirements-legacy.txt`; the
+Docker server no longer installs Voyage or Chroma.
+
+Model routing defaults:
+
+| Stage | Groq model | Maximum output tokens |
+| --- | --- | --- |
+| Evidence extraction | openai/gpt-oss-20b | 2200 |
+| Identity | openai/gpt-oss-20b | 1200 |
+| Grading | openai/gpt-oss-120b | 2500 |
+| Calendar | openai/gpt-oss-20b | 1200 |
+
+`GROQ_EVIDENCE_MODEL`, `GROQ_IDENTITY_MODEL`, `GROQ_GRADING_MODEL`, and
+`GROQ_CALENDAR_MODEL` override individual stages. An existing `GROQ_MODULE_MODEL`
+overrides all unspecified stages: remove it to use the new defaults, or set each
+stage explicitly. Only configure models supporting Groq JSON-schema responses.
+The implementation uses best-effort structured output plus local validation.
+Grading failures get one evidence-grounded repair attempt. Participation component
+weights must total 100%; incomplete or contradictory rules are rejected, not invented.
+
+`GROQ_TPM_BUDGET` defaults to 8000. Requests reserve estimated prompt/schema tokens
+plus maximum output tokens and leave 500 tokens of headroom. The estimate is a
+UTF-8-based approximation, not the model's exact tokenizer. A per-model sliding
+window schedules requests; explicit 429 retries also reserve tokens. Provider 413
+is distinguished from a confirmed context-window error. Oversized assembly requests
+fail explicitly instead of silently dropping facts. Do not increase the budget
+beyond the account's actual limit. External requests using the same account are
+not visible to this local limiter; provider rejections still need handling.
+
+Academiq now uses `POST /extractions` (multipart `files`, Supabase bearer token),
+which returns HTTP 202 and `{jobId,status}`. It polls authenticated
+`GET /extractions/{jobId}` for `processing`, `completed` with `{result}`, or `failed`
+with `{error: {detail,code,status}}`. Only the owner can retrieve a job. Quota is
+charged at submission, never on polling. The old `/process-documents` synchronous
+endpoint remains compatible for old clients, with its original 240-second deadline.
+
+Jobs run for at most 20 minutes; completed results are ephemeral and expire within
+30 minutes. Uploaded temporary files close on success, failure, timeout or cancellation.
+Jobs/results do not survive server restarts. Keep one process/instance for this
+deployment (`WEB_CONCURRENCY=1`, `MAX_CONCURRENT_EXTRACTIONS=1`); multiple replicas
+need a shared job store, queue and rate limiter before enabling them. Keep the browser
+page open while processing. The browser retains selected files when an error occurs.
+
+Deploy Medusa first, then Academiq. Existing Render services may require setting the
+environment values manually; committing render.yaml alone does not establish that
+the dashboard service is managed by a Blueprint.
+
+Coverage checks prove every section was submitted and returned quotes exist in the
+source; they do not prove the model captured every relevant fact. User review remains
+required. No second provider is enabled or sent documents automatically. A vision
+provider still needs representative scan/table evaluation and explicit configuration.
+
+The original architecture notes below describe the previous retrieval implementation;
+the revision above is authoritative for the default endpoint behavior.
+
 Academiq's existing FastAPI document-to-module service. Extraction returns an
 unsaved draft; only the user's explicit save in Academiq's ModuleEditor creates
 or updates a Supabase user_modules row.

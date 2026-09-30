@@ -38,6 +38,8 @@ def validate_module(module):
     ids = [a.id for a in module.assessments]
     if not ids or not module.participationFormula.components:
         errors.append("At least one assessment and a participation formula are required.")
+    if abs(sum(c.weight for c in module.participationFormula.components) - 100) > .1:
+        errors.append("Participation formula component weights must total 100 percent; retain source percentages, not decimal fractions.")
     if len(ids) != len(set(ids)) or any(not item for item in ids):
         errors.append("Assessment IDs must be unique and nonempty.")
     component_ids = [c.componentId for c in module.participationFormula.components]

@@ -182,6 +182,24 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertEqual(client.count_collections(), before)
 
+    async def test_semantic_grading_repair_uses_source_and_validates_again(self):
+        values = parts()
+        bad = values["grading"].model_dump()
+        bad["finalMarkFormula"] = {"participationWeight": 100, "examWeight": 0}
+        payloads = [values["identity"].model_dump(), bad, values["calendar"].model_dump(), values["grading"].model_dump()]
+        client = AsyncMock()
+        client.chat.completions.create.side_effect = [SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(value)))]) for value in payloads]
+        manager = AsyncMock()
+        manager.__aenter__.return_value = client
+        contexts = {purpose: [{"content": "original evidence"}] for purpose in FIELDS}
+        with patch.dict("os.environ", {"GROQ_API_KEY": "test"}), patch("app.ai.generate_module.AsyncGroq", return_value=manager), patch("app.ai.generate_module.collect_evidence", new=AsyncMock(return_value=(contexts, []))), patch("app.ai.provider.limiter.reserve", new=AsyncMock()):
+            result = await create_module(source())
+        self.assertFalse(result.module.hasExam)
+        self.assertIsNone(result.module.finalMarkFormula)
+        final_messages = client.chat.completions.create.call_args.kwargs["messages"]
+        self.assertIn("original evidence", final_messages[1]["content"])
+        self.assertIn("Final mark weights", final_messages[2]["content"])
+
     async def test_three_focused_calls_use_preserved_default_and_overrides(self):
         values = parts()
         responses = [SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=values[p].model_dump_json()))]) for p in FIELDS]
@@ -190,11 +208,12 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
         manager = AsyncMock()
         manager.__aenter__.return_value = client
         contexts = {purpose: [{"content": purpose + " evidence"}] for purpose in FIELDS}
-        with patch.dict("os.environ", {"GROQ_API_KEY": "test", "GROQ_CALENDAR_MODEL": "configured-calendar"}), patch("app.ai.generate_module.AsyncGroq", return_value=manager), patch("app.ai.generate_module.retrieve_contexts", return_value=(contexts, [])):
+        with patch.dict("os.environ", {"GROQ_API_KEY": "test", "GROQ_CALENDAR_MODEL": "configured-calendar"}), patch("app.ai.generate_module.AsyncGroq", return_value=manager), patch("app.ai.generate_module.collect_evidence", new=AsyncMock(return_value=(contexts, []))), patch("app.ai.provider.limiter.reserve", new=AsyncMock()):
             result = await create_module(source())
         calls = client.chat.completions.create.call_args_list
         self.assertEqual(len(calls), 3)
         self.assertEqual(calls[0].kwargs["model"], "openai/gpt-oss-20b")
+        self.assertEqual(calls[1].kwargs["model"], "openai/gpt-oss-120b")
         self.assertEqual(calls[2].kwargs["model"], "configured-calendar")
         self.assertNotIn("grading evidence", calls[0].kwargs["messages"][1]["content"])
         self.assertEqual(result.module.moduleId, "abc123")
@@ -211,10 +230,21 @@ class SecurityTests(unittest.TestCase):
         before = chroma.count_collections()
         values = parts()
         provider = AsyncMock()
-        provider.chat.completions.create.side_effect = [SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=values[p].model_dump_json()))]) for p in FIELDS]
+        async def answer(**kwargs):
+            schema_name = kwargs["response_format"]["json_schema"]["name"]
+            if schema_name == "EvidenceExtraction":
+                blocks = json.loads(kwargs["messages"][1]["content"])
+                value = {"reviewedBlockIds": [b["id"] for b in blocks], "facts": [
+                    {"blockId": b["id"], "purpose": purpose, "quote": b["content"]}
+                    for b in blocks for purpose in FIELDS]}
+                content = json.dumps(value)
+            else:
+                content = values[schema_name.removesuffix("Extraction").lower()].model_dump_json()
+            return SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=content))])
+        provider.chat.completions.create.side_effect = answer
         manager = AsyncMock()
         manager.__aenter__.return_value = provider
-        with patch("app.main.authorize", new=AsyncMock(return_value="owner")), patch.dict("os.environ", {"GROQ_API_KEY": "test"}), patch("app.utils.retrieval.embedder", return_value=Embeddings()), patch("app.ai.generate_module.AsyncGroq", return_value=manager), TestClient(app) as client:
+        with patch("app.main.authorize", new=AsyncMock(return_value="owner")), patch.dict("os.environ", {"GROQ_API_KEY": "test"}), patch("app.utils.retrieval.embedder", side_effect=AssertionError("Default path must not use embeddings")), patch("app.ai.provider.limiter.reserve", new=AsyncMock()), patch("app.ai.generate_module.AsyncGroq", return_value=manager), TestClient(app) as client:
             response = client.post("/process-documents", files={"files": ("plan.pdf", data.getvalue(), "application/pdf")})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["module"]["id"], "")

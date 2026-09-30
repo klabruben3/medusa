@@ -13,6 +13,7 @@ class ProviderErrorTests(unittest.TestCase):
             (400, "model_decommissioned", "groq_model_unavailable"),
             (400, "json_validate_failed", "groq_schema_failed"),
             (400, "context_length_exceeded", "groq_context_limit"),
+            (413, None, "groq_request_too_large"),
             (400, "SECRET_DOCUMENT", "groq_request_rejected"),
             (503, None, "groq_unavailable"),
         ]:

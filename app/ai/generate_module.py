@@ -11,7 +11,8 @@ from pydantic import ValidationError
 from ..types.schema import ExtractionResult, Module
 from ..utils.documents import DocumentError
 from ..utils.validation import validate_module
-from ..utils.retrieval import blocking_job, retrieve_contexts
+from .evidence import collect_evidence
+from .provider import complete
 from .partials import PARTIALS
 
 load_dotenv()
@@ -43,7 +44,7 @@ satisfy a formula. Give exam papers stable IDs. Output only JSON.
 """
 
 
-async def run_worker(client, purpose, blocks, identity=None):
+async def run_worker(client, purpose, blocks, identity=None, feedback=None):
     from time import monotonic
     started = monotonic()
     schema_type = PARTIALS[purpose]
@@ -57,13 +58,11 @@ async def run_worker(client, purpose, blocks, identity=None):
         {"role": "user", "content": json.dumps({"uploadYear": date.today().year,
          "moduleIdentity": identity, "blocks": blocks}, ensure_ascii=False)},
     ]
+    if feedback:
+        messages.append({"role": "user", "content": "The prior assembly failed these checks. Re-extract your fields from the evidence and correct these issues without inventing facts: " + json.dumps(feedback)})
     for attempt in range(2):
-        response = await client.chat.completions.create(
-            model=os.getenv(f"GROQ_{purpose.upper()}_MODEL") or os.getenv("GROQ_MODULE_MODEL", "openai/gpt-oss-20b"),
-            messages=messages,
-            response_format={"type": "json_schema", "json_schema": {"name": purpose.title() + "Extraction", "schema": schema, "strict": False}},
-            temperature=0, max_completion_tokens=16000 if purpose == "grading" else 6000,
-        )
+        response = await complete(client, purpose, messages, schema,
+                                  2500 if purpose == "grading" else 1200)
         raw = response.choices[0].message.content or ""
         if response.choices[0].finish_reason != "stop":
             raise DocumentError("The extraction was incomplete. Upload a smaller document set.", 422, "incomplete_output")
@@ -104,8 +103,11 @@ def merge_parts(parts, warnings=()):
         raise DocumentError("Could not identify one academic module. Supply its study guide.", 422, "no_module")
     for assessment in module.assessments:
         assessment.score = assessment.completed = None
-    if validate_module(module):
-        raise DocumentError("The documents could not produce consistent grading rules. Supply missing assessment or grading details.", 422, "invalid_grading")
+    errors = validate_module(module)
+    if errors:
+        failure = DocumentError("The documents could not produce consistent grading rules. Supply missing assessment or grading details.", 422, "invalid_grading")
+        failure.validation_errors = errors
+        raise failure
     for field in ("semesterStart", "semesterEnd"):
         if not getattr(module, field):
             notes.append(f"{field} was not provided; enter it before saving.")
@@ -120,13 +122,19 @@ def merge_parts(parts, warnings=()):
 async def create_module(sources, ingestion_id=None):
     if not os.getenv("GROQ_API_KEY"):
         raise DocumentError("Medusa is missing GROQ_API_KEY. Set it in Render.", 503, "missing_groq_api_key")
-    contexts, notes = await blocking_job(retrieve_contexts, sources, ingestion_id)
-    # Collection has already been deleted, including before any provider error/timeout.
-    # Sequential requests avoid bursting the same model's TPM/RPM allocation.
-    async with AsyncGroq(timeout=60, max_retries=1) as client:
+    # Provider retries are explicitly budgeted by our scheduler, not hidden SDK calls.
+    async with AsyncGroq(timeout=60, max_retries=0) as client:
+        contexts, notes = await collect_evidence(client, sources)
         parts = {}
         parts["identity"] = await run_worker(client, "identity", contexts["identity"])
         identity = {"code": parts["identity"].code, "name": parts["identity"].name}
         for purpose in ("grading", "calendar"):
             parts[purpose] = await run_worker(client, purpose, contexts[purpose], identity)
-    return merge_parts(parts, notes)
+        try:
+            return merge_parts(parts, notes)
+        except DocumentError as exc:
+            if exc.code != "invalid_grading":
+                raise
+            parts["grading"] = await run_worker(client, "grading", contexts["grading"], identity,
+                                                feedback=exc.validation_errors)
+            return merge_parts(parts, notes)
