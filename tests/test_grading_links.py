@@ -52,6 +52,27 @@ class GradingLinkTests(unittest.TestCase):
         part.participationFormula.components[0].dropLowest = 1
         self.assertIs(link_individual_weights(part), part)
 
+    def test_null_diagnostics_do_not_create_schema_retries(self):
+        part = grading().model_dump()
+        part.update(warnings=None, conflicts=None)
+        parsed = PARTIALS['grading'].model_validate(part)
+        self.assertEqual(parsed.warnings, [])
+        self.assertEqual(parsed.conflicts, [])
+        part['conflicts'] = ['Conflicting percentages']
+        self.assertEqual(PARTIALS['grading'].model_validate(part).conflicts, part['conflicts'])
+
+    def test_explicit_admission_threshold_can_fill_only_unknown_duplicate(self):
+        from app.types.schema import PassRequirements
+        part = grading()
+        part.passRequirements = PassRequirements(participationMin=40)
+        part.participationFormula.minimumToPass = -1
+        self.assertEqual(link_individual_weights(part).participationFormula.minimumToPass, 40)
+        part.participationFormula.minimumToPass = 45
+        self.assertEqual(link_individual_weights(part).participationFormula.minimumToPass, 45)
+        part.participationFormula.minimumToPass = -1
+        part.passRequirements = None
+        self.assertEqual(link_individual_weights(part).participationFormula.minimumToPass, -1)
+
     def test_invalid_marks_still_fail_and_public_issues_do_not_expose_ids(self):
         module = sample()
         module.assessments[0].maxScore = 0

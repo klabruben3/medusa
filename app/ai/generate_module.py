@@ -37,6 +37,8 @@ Conditional bonuses/supplements and near-threshold adjustments are not fixed wei
 conditions in dataNote and warnings. Equivalent bilingual facts or absent optional facts are not conflicts.
 Keep minimumCompleted separate from dropLowest; participation admission, exam subminimum and final pass
 threshold separate. minimumToPass is participation admission, or final threshold for a no-exam module.
+Afrikaans deelnamepunt/DP and PM mean participation mark; eksamentoelating means exam admission.
+Use the explicitly stated participation admission percentage even when the final exam split is missing.
 Never assume a 50/50 final split or confuse participation weights with final exam weights.
 Dates: YYYY-MM-DD; times: HH:mm. Preserve ranges/sign-up slots; never guess years. Exam papers need stable IDs.
 Warn with filename/page about missing facts and real conflicts. Never silently choose between conflicts.
@@ -128,6 +130,11 @@ def link_individual_weights(part):
     Never normalize weights, infer missing percentages, alter a supplied formula,
     or include exam weights in participation. All remaining semantic checks apply.
     """
+    # The schema represents the same admission threshold in two places. Preserve
+    # a known explicit value when the model leaves only its duplicate unknown.
+    if part.hasExam and part.participationFormula.minimumToPass < 0 and part.passRequirements and part.passRequirements.participationMin is not None:
+        part = part.model_copy(update={'participationFormula': part.participationFormula.model_copy(
+            update={'minimumToPass': part.passRequirements.participationMin})})
     existing = part.participationFormula.components
     # A wholly unknown placeholder carries no source weighting to preserve.
     # Never replace an actual (including partially supplied) formula or pool rule.
