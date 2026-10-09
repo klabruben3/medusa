@@ -27,12 +27,14 @@ prior courses; identify the current module from its title and assessment/exam re
 Never invent dates, marks, weights, thresholds, contacts or rules. Missing required text: empty string;
 missing required numbers: -1; missing optional fields: null/omit. Warn about each omission with source/page.
 hasExam requires explicit evidence; unknown: false plus warning. Practical exams alone do not imply hasExam.
-Use supplied uploadYear for addedYear, color #6366f1, empty id, isPinned false. No student scores/completion.
+No student scores/completion.
 moduleId: lowercase alphanumeric code. Assessment IDs: stable module-prefixed names. Keep categories
 consistent. Formula componentId must equal an assessment ID or <moduleId>-<category> with exact category.
 For individual participation weights, link the exact percentages to assessment IDs in formula components,
 even without a 'participation formula' heading. Pooled category weights belong in formula components;
 individual assessment weight is then 0. Never normalize weights, invent assessments or assume maxScore 100.
+Exam assessment weight is its participation contribution: use 0 when excluded from the participation plan.
+The separate final exam weighting belongs only in finalMarkFormula; omit that formula if unstated.
 Conditional bonuses/supplements and near-threshold adjustments are not fixed weights. Preserve exact
 conditions in dataNote and warnings. Equivalent bilingual facts or absent optional facts are not conflicts.
 Keep minimumCompleted separate from dropLowest; participation admission, exam subminimum and final pass
@@ -136,22 +138,35 @@ def link_individual_weights(part):
         part = part.model_copy(update={'participationFormula': part.participationFormula.model_copy(
             update={'minimumToPass': part.passRequirements.participationMin})})
     existing = part.participationFormula.components
+    non_exam = [assessment for assessment in part.assessments if assessment.type != "exam"]
+    weighted = [assessment for assessment in non_exam if assessment.weight > 0]
+    complete_plan = bool(weighted) and all(assessment.weight >= 0 for assessment in non_exam) and abs(sum(a.weight for a in weighted) - 100) <= .1
+    if part.hasExam and complete_plan:
+        assessments = []
+        for assessment in part.assessments:
+            referenced = any(component.componentId == assessment.id or
+                             (assessment.category and component.componentId.endswith('-' + assessment.category))
+                             for component in existing)
+            assessments.append(assessment.model_copy(update={'weight': 0})
+                               if assessment.type == 'exam' and assessment.weight < 0 and not referenced else assessment)
+        if any(original.weight != linked.weight for original, linked in zip(part.assessments, assessments)):
+            part = part.model_copy(update={'assessments': assessments,
+                'warnings': [*part.warnings, 'Exam excluded from the complete participation plan; its final-mark weighting remains a separate source requirement.']})
     # A wholly unknown placeholder carries no source weighting to preserve.
     # Never replace an actual (including partially supplied) formula or pool rule.
     if existing and not all(component.weight < 0 and all(getattr(component, field) is None
                             for field in ('dropLowest', 'minimumCompleted', 'totalInCategory', 'useAll'))
                             for component in existing):
         return part
-    non_exam = [assessment for assessment in part.assessments if assessment.type != "exam"]
     if any(assessment.weight < 0 for assessment in non_exam):
         return part
-    weighted = [assessment for assessment in non_exam if assessment.weight > 0]
     if not weighted or abs(sum(assessment.weight for assessment in weighted) - 100) > .1:
         return part
     components = [FormulaComponent(componentId=assessment.id, weight=assessment.weight) for assessment in weighted]
+    notes = [*part.warnings, "Participation formula linked to the extracted individual assessment weights. Verify these source weights before saving."]
     return part.model_copy(update={
         "participationFormula": part.participationFormula.model_copy(update={"components": components}),
-        "warnings": [*part.warnings, "Participation formula linked to the extracted individual assessment weights. Verify these source weights before saving."],
+        "warnings": notes,
     })
 
 

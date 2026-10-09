@@ -61,6 +61,22 @@ class GradingLinkTests(unittest.TestCase):
         part['conflicts'] = ['Conflicting percentages']
         self.assertEqual(PARTIALS['grading'].model_validate(part).conflicts, part['conflicts'])
 
+    def test_unknown_exam_weight_does_not_block_a_complete_non_exam_plan(self):
+        part = grading((30, 30, 40, -1))
+        part.assessments[-1].type = 'exam'
+        linked = link_individual_weights(part)
+        self.assertEqual(linked.assessments[-1].weight, 0)
+        self.assertEqual(linked.assessments[-1].maxScore, part.assessments[-1].maxScore)
+        self.assertIsNone(linked.finalMarkFormula)
+        part.participationFormula.components = linked.participationFormula.components
+        self.assertEqual(link_individual_weights(part).assessments[-1].weight, 0)
+        from app.types.schema import FormulaComponent
+        part.participationFormula.components = [FormulaComponent(componentId=part.assessments[-1].id, weight=100)]
+        self.assertEqual(link_individual_weights(part).assessments[-1].weight, -1)
+        part.participationFormula.components = []
+        part.assessments[0].weight = 20
+        self.assertEqual(link_individual_weights(part).assessments[-1].weight, -1)
+
     def test_explicit_admission_threshold_can_fill_only_unknown_duplicate(self):
         from app.types.schema import PassRequirements
         part = grading()
