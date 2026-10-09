@@ -27,6 +27,13 @@ PROCESSING_TIMEOUT = 240
 active_jobs = set()
 
 
+def document_failure(exc):
+    payload = {"detail": str(exc), "code": exc.code}
+    if getattr(exc, "issues", None):
+        payload["issues"] = exc.issues
+    return payload
+
+
 def groq_failure(exc, job_id):
     """Expose actionable diagnostics without provider messages or generated content."""
     status = getattr(exc, "status_code", None)
@@ -86,7 +93,7 @@ async def process_documents(files: list[UploadFile], job_id=None):
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "academiq-api"}
+    return {"status": "ok", "service": "academiq-api", "extractionVersion": 2}
 
 
 async def uploaded_documents(request, job_id, accept=None):
@@ -147,7 +154,7 @@ async def main(request: Request):
         return await asyncio.wait_for(uploaded_documents(request, job_id), timeout=PROCESSING_TIMEOUT)
     except DocumentError as exc:
         logger.warning("stage=failed job=%s code=%s status=%d", job_id, exc.code, exc.status)
-        return JSONResponse({"detail": str(exc), "code": exc.code}, status_code=exc.status)
+        return JSONResponse(document_failure(exc), status_code=exc.status)
     except RateLimitError:
         return JSONResponse({"detail": "The extraction provider is busy. Try again shortly.", "code": "rate_limited"}, status_code=429)
     except (APITimeoutError, TimeoutError):
@@ -186,7 +193,10 @@ async def execute_job(job, files, form):
         job.update(status="completed", result=result.model_dump(exclude_none=True))
     except DocumentError as exc:
         logger.warning("stage=job_failed job=%s code=%s", job["id"], exc.code)
-        job.update(status="failed", error={"detail": str(exc), "code": exc.code, "status": exc.status})
+        issues = getattr(exc, "issues", [])
+        if issues:
+            logger.warning("stage=validation_failed job=%s issues=%s", job["id"], [issue["code"] for issue in issues])
+        job.update(status="failed", error={**document_failure(exc), "status": exc.status})
     except RateLimitError:
         job.update(status="failed", error={"detail": "Groq's account limit was reached. Retry later.", "code": "rate_limited", "status": 429})
     except (APITimeoutError, TimeoutError):

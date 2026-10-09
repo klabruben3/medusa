@@ -5,7 +5,7 @@ from ..types.schema import BaseModel, Module
 
 FIELDS = {
     "identity": ("code", "name", "lecturer", "email", "office", "consultationHours", "groups"),
-    "grading": ("assessments", "participationFormula", "passRequirements", "finalMarkFormula", "hasExam", "examInfo"),
+    "grading": ("assessments", "participationFormula", "passRequirements", "finalMarkFormula", "hasExam", "examInfo", "dataNote"),
     "calendar": ("semesterStart", "semesterEnd", "examDate", "examDateEnd", "examOpportunities", "recessPeriods"),
 }
 

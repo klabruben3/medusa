@@ -4,6 +4,32 @@ import re
 from datetime import date
 
 
+def safe_validation_issues(errors):
+    """Static public diagnostics; never expose generated IDs or source contents."""
+    rules = [
+        ("At least one assessment", "missing_formula", "An assessment list and participation formula are required."),
+        ("component weights must total", "participation_weights", "Participation component weights must total 100%."),
+        ("no matching assessment", "formula_links", "A formula component does not match an assessment or category."),
+        ("multiple formula components", "duplicate_weighting", "An assessment is counted in more than one formula component."),
+        ("Final mark weights", "final_weights", "Final-mark weights must match the exam structure and total 100%."),
+        ("maxScore", "maximum_marks", "An assessment or exam has a missing or invalid maximum mark."),
+        ("nonnegative", "missing_number", "A required numeric grading value is missing or invalid."),
+        ("at most 100", "percentage_range", "A percentage is outside the supported 0–100 range."),
+        ("ISO calendar date", "invalid_date", "A supplied assessment or calendar date is invalid."),
+        ("HH:mm", "invalid_time", "An assessment time is invalid."),
+        ("precedes", "date_order", "An assessment or calendar date range is reversed."),
+        ("dropLowest", "drop_rule", "The number of dropped assessments is incompatible with the category size."),
+        ("minimumCompleted", "completion_rule", "Required completion exceeds the category size."),
+        ("IDs must be", "identifiers", "Assessment or formula identifiers are missing or duplicated."),
+    ]
+    issues = {}
+    for error in errors:
+        code, message = next(((code, message) for fragment, code, message in rules if fragment in error),
+                             ("invalid_structure", "The extracted grading structure is inconsistent."))
+        issues[code] = {"code": code, "message": message}
+    return list(issues.values())
+
+
 def validate_module(module):
     errors = []
     data = module.model_dump(exclude_none=True)
