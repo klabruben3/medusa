@@ -86,3 +86,31 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
             response = await self.client.get("/extractions/unknown")
             self.assertEqual(response.status_code, 404)
             self.assertEqual(response.json()["code"], "job_not_found")
+
+    async def test_durable_completion_stays_server_side_and_failure_preserves_polling(self):
+        handles = []
+        async def process(files, job_id):
+            handles.extend(f.file for f in files)
+            return ExtractionResult(module=sample())
+        async def admit(request, job_id, count):
+            return {"id": job_id, "proof": "private-fixture-capability"}
+        async def complete(job):
+            self.assertTrue(all(handle.closed for handle in handles))
+            self.assertEqual(job["status"], "completed")
+            return completion_available
+        with patch("app.main.authorize", new=AsyncMock(return_value="owner")) as auth, patch("app.main.process_documents", side_effect=process), patch("app.main.job_journal.start", new=AsyncMock(side_effect=admit)) as start, patch("app.main.job_journal.finish", new=AsyncMock(side_effect=complete)) as finish:
+            for completion_available in (True, False):
+                response = await self.client.post("/extractions", files={"files": ("x.pdf", b"fixture")})
+                self.assertEqual(response.status_code, 202)
+                self.assertTrue(response.json()["durable"])
+                self.assertNotIn("private-fixture", response.text)
+                job_id = response.json()["jobId"]
+                await extraction_jobs[job_id]["task"]
+                polled = await self.client.get("/extractions/" + job_id)
+                self.assertEqual(polled.json()["status"], "completed")
+                self.assertNotIn("private-fixture", polled.text)
+                self.assertNotIn("journal", polled.text)
+                self.assertNotIn("owner", active_jobs)
+            self.assertEqual(start.await_count, 2)
+            self.assertEqual(finish.await_count, 2)
+            self.assertEqual(sum(call.kwargs.get("consume_quota", True) for call in auth.call_args_list), 2)
