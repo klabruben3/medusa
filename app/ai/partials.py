@@ -1,11 +1,11 @@
 """Worker fields are selected from Module, never maintained as duplicate schemas."""
 from copy import deepcopy
-from pydantic import create_model, Field
+from pydantic import create_model, Field, field_validator
 from ..types.schema import BaseModel, Module
 
 FIELDS = {
     "identity": ("code", "name", "lecturer", "email", "office", "consultationHours", "groups"),
-    "grading": ("assessments", "participationFormula", "passRequirements", "finalMarkFormula", "hasExam", "examInfo"),
+    "grading": ("assessments", "participationFormula", "passRequirements", "finalMarkFormula", "hasExam", "examInfo", "dataNote"),
     "calendar": ("semesterStart", "semesterEnd", "examDate", "examDateEnd", "examOpportunities", "recessPeriods"),
 }
 
@@ -16,7 +16,11 @@ def partial_model(purpose):
     fields["warnings"] = (list[str], Field(default_factory=list))
     # Conflicting numeric/identity facts cannot safely be represented as one answer.
     fields["conflicts"] = (list[str], Field(default_factory=list))
-    return create_model(purpose.title() + "Part", __base__=BaseModel, **fields)
+    # A null diagnostic list means no diagnostics, not missing academic facts.
+    normalize_notes = field_validator('warnings', 'conflicts', mode='before')(
+        lambda value: [] if value is None else value)
+    return create_model(purpose.title() + "Part", __base__=BaseModel,
+                        __validators__={'normalize_notes': normalize_notes}, **fields)
 
 
 PARTIALS = {purpose: partial_model(purpose) for purpose in FIELDS}

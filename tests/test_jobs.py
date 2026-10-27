@@ -67,6 +67,20 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(auth.await_count, 1)
             self.assertFalse(auth.call_args.kwargs["consume_quota"])
 
+    async def test_grading_issues_are_available_only_to_job_owner(self):
+        failure = DocumentError('Review grading rules.', 422, 'invalid_grading')
+        failure.issues = [dict(code='participation_weights', message='Participation weights must total 100%.')]
+        with patch('app.main.authorize', new=AsyncMock(return_value='owner')) as auth, patch('app.main.process_documents', new=AsyncMock(side_effect=failure)):
+            started = await self.client.post('/extractions', files={'files': ('x.pdf', b'fixture')})
+            job_id = started.json()['jobId']
+            await extraction_jobs[job_id]['task']
+            result = await self.client.get('/extractions/' + job_id)
+            self.assertEqual(result.json()['error']['issues'], failure.issues)
+            auth.return_value = 'other-user'
+            denied = await self.client.get('/extractions/' + job_id)
+            self.assertEqual(denied.status_code, 404)
+            self.assertNotIn('participation_weights', denied.text)
+
     async def test_restart_or_unknown_job_is_explicit(self):
         with patch("app.main.authorize", new=AsyncMock(return_value="owner")):
             response = await self.client.get("/extractions/unknown")
