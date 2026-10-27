@@ -211,3 +211,9 @@ time (including a bounded in-flight provider/OCR operation). Collection cleanup 
 before generation, so model errors, invalid JSON and timeouts cannot leave a collection.
 An abrupt process termination also loses the in-memory collection; local upload-temp
 cleanup after an OS/container failure is the hosting runtime's responsibility.
+
+## Privacy activation gate (2026-10-15)
+
+EXTERNAL_VERIFICATION_REQUIRED: default Groq extraction refuses provider requests until AI_GROQ_NO_TRAINING_VERIFIED, AI_GROQ_RETENTION_VERIFIED, AI_GROQ_INTERNATIONAL_TRANSFER_VERIFIED and AI_GROQ_MINOR_SAFEGUARDS_VERIFIED are all exactly true, and AI_GROQ_REVIEW_REFERENCE identifies an actual authorized review record. The reference must document the actual account/endpoint contract prohibiting customer-content training, retention/deletion limits, transfer assessment, and minor/guardian safeguards. Flags attest to evidence; they do not certify compliance. Configure these on Medusa separately from Academiq Iris. No flags, agreements or deployments were verified or activated by this change.
+
+The guard runs before admission and again at the final Groq request boundary. Native PDF/text/table/OCR parsing and deterministic validation remain intact; only the external model step is isolated. Existing legacy Voyage/Chroma helpers are not covered by this Groq guard and must remain outside the default processing path pending their own review. Test with python -m unittest discover -s tests -p test_processing_review.py.
