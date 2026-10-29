@@ -165,6 +165,16 @@ class NormalizationTests(unittest.TestCase):
 
 
 class AsyncTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # These provider calls are fully mocked. Exercise the admitted branch
+        # without attesting to a real account review or changing runtime settings.
+        review = {f"AI_GROQ_{name}_VERIFIED": "true" for name in
+                  ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")}
+        review["AI_GROQ_REVIEW_REFERENCE"] = "synthetic-unit-fixture-only"
+        self.review_fixture = patch.dict("os.environ", review)
+        self.review_fixture.start()
+        self.addCleanup(self.review_fixture.stop)
+
     async def test_cancellation_waits_for_collection_cleanup(self):
         client = chroma_client()
         before = client.count_collections()

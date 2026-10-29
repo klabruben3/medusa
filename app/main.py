@@ -16,6 +16,7 @@ from .types.schema import ExtractionResult
 from .utils.auth import authorize
 from .utils.documents import DocumentError, extract_source, MAX_FILE_BYTES, MAX_TOTAL_BYTES, MAX_FILES, MAX_TEXT
 from .utils.retrieval import blocking_job
+from .utils import job_journal
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware,
@@ -93,7 +94,8 @@ async def process_documents(files: list[UploadFile], job_id=None):
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "academiq-api", "extractionVersion": 2}
+    return {"status": "ok", "service": "academiq-api", "extractionVersion": 2,
+            "documentJournalVersion": 1, "durableJobsEnabled": job_journal.enabled()}
 
 
 async def uploaded_documents(request, job_id, accept=None):
@@ -213,7 +215,12 @@ async def execute_job(job, files, form):
         job.update(status="failed", error={"detail": "Document processing failed. Please retry.", "code": "processing_error", "status": 502})
     finally:
         await form.close()
-        active_jobs.discard(job["owner"])
+        # Notification persistence runs on the server even if the browser/app
+        # closed. A lost process is later marked unconfirmed by the journal.
+        try:
+            await job_journal.finish(job)
+        finally:
+            active_jobs.discard(job["owner"])
         # Expire without depending on another request arriving to trigger pruning.
         asyncio.get_running_loop().call_later(JOB_TTL, extraction_jobs.pop, job["id"], None)
 
@@ -235,10 +242,11 @@ async def start_extraction(request: Request):
             if not files or len(files) > MAX_FILES:
                 raise DocumentError("Upload between 1 and 10 documents.", 413, "file_count")
             job = {"id": job_id, "owner": owner, "status": "processing", "created": monotonic()}
+            job["journal"] = await job_journal.start(request, job_id, len(files))
             job["task"] = asyncio.create_task(execute_job(job, files, form))
             extraction_jobs[job_id] = job
             transferred = True
-            return JSONResponse({"jobId": job_id, "status": "processing"}, status_code=202)
+            return JSONResponse({"jobId": job_id, "status": "processing", "durable": job["journal"] is not None}, status_code=202)
         return await uploaded_documents(request, job_id, accept=accept)
     except DocumentError as exc:
         return JSONResponse({"detail": str(exc), "code": exc.code}, status_code=exc.status)
