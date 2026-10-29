@@ -24,3 +24,6 @@ services:
         sync: false
       - key: MAX_CONCURRENT_EXTRACTIONS
         value: "1"
+      # Enable only after the Academiq callback endpoints are deployed and checked.
+      - key: ACADEMIQ_DURABLE_JOBS
+        value: "false"

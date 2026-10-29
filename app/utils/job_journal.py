@@ -18,8 +18,12 @@ COMPLETION_URL = "https://academiq.studio/api/native/documents/complete"
 RESULT_LIMIT = 262144
 
 
+def enabled():
+    return os.getenv("ACADEMIQ_DURABLE_JOBS", "").strip().lower() in {"1", "true"}
+
+
 async def start(request, job_id, file_count):
-    if os.getenv("ACADEMIQ_DURABLE_JOBS", "").strip().lower() not in {"1", "true"}:
+    if not enabled():
         return None
     proof = secrets.token_hex(32)
     origin = os.getenv("SUPABASE_URL", "").strip().rstrip("/")

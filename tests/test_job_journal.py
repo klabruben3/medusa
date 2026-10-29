@@ -28,6 +28,18 @@ class Client:
 
 
 class JournalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_health_distinguishes_deployed_journal_code_from_activation(self):
+        from app.main import app
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://fixture") as client:
+            for value, expected in (("false", False), ("true", True)):
+                with patch.dict(os.environ, {"ACADEMIQ_DURABLE_JOBS": value}):
+                    response = await client.get("/")
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertEqual(body["service"], "academiq-api")
+                self.assertEqual(body["documentJournalVersion"], 1)
+                self.assertIs(body["durableJobsEnabled"], expected)
+
     async def test_disabled_configuration_preserves_the_existing_processing_path(self):
         with patch.dict(os.environ, {"ACADEMIQ_DURABLE_JOBS": "false"}), patch.object(job_journal.httpx, "AsyncClient") as client:
             self.assertIsNone(await job_journal.start(SimpleNamespace(headers={}), "a" * 32, 1))

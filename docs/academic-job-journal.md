@@ -14,4 +14,8 @@ The journal persists completion state, not uploaded source files or a resumable 
 
 Deployment order: database migration → Academiq web/API → Medusa code → enable the flag → controlled authenticated extraction/notification/recovery test. Roll back by disabling the flag; existing clients and ordinary extraction continue working. Do not drop retained results or academic tables as a rollback step.
 
+The public health endpoint retains `status`, `service` and `extractionVersion`, adding `documentJournalVersion: 1` and the non-secret boolean `durableJobsEnabled`. Verify these fields against the exact live Render commit after deployment; an HTTP 200 from older code alone does not establish journal readiness. Existing Render services must set the flag in their service environment; the Blueprint default remains off.
+
+Keep the existing Groq processing-review gate intact. Journal activation does not approve a provider review, enable Groq, change its account credentials or guarantee push delivery. A missing review must remain an explicit processing limitation; a synthetic failure/callback check is not evidence of a successful model extraction.
+
 Run the focused tests with `python -m unittest discover -s tests -p test_job_journal.py -v` from the Medusa project. This verifies HTTP behavior with isolated fixtures; it does not prove a deployed callback, push display or Android tap.

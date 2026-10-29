@@ -94,7 +94,8 @@ async def process_documents(files: list[UploadFile], job_id=None):
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "academiq-api", "extractionVersion": 2}
+    return {"status": "ok", "service": "academiq-api", "extractionVersion": 2,
+            "documentJournalVersion": 1, "durableJobsEnabled": job_journal.enabled()}
 
 
 async def uploaded_documents(request, job_id, accept=None):
