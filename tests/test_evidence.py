@@ -79,6 +79,11 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BudgetTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        review = patch.dict("os.environ", {**{f"AI_GROQ_{key}_VERIFIED": "true" for key in ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")}, "AI_GROQ_REVIEW_REFERENCE": "synthetic-test-review"})
+        review.start()
+        self.addCleanup(review.stop)
+
     async def test_waits_per_model_and_accounts_for_reserved_output(self):
         now = [0.0]
         waits = []

@@ -115,6 +115,9 @@ class EndpointTests(unittest.TestCase):
 
 class GenerationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        review = patch.dict("os.environ", {**{f"AI_GROQ_{key}_VERIFIED": "true" for key in ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")}, "AI_GROQ_REVIEW_REFERENCE": "synthetic-test-review"})
+        review.start()
+        self.addCleanup(review.stop)
         reservation = patch("app.ai.provider.limiter.reserve", new=AsyncMock())
         reservation.start()
         self.addCleanup(reservation.stop)

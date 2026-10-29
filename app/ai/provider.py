@@ -57,7 +57,17 @@ class ModelLimiter:
 limiter = ModelLimiter()
 
 
+
+def verify_processing_review():
+    """Fail closed until the actual provider account and minor safeguards have been reviewed."""
+    checks = ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")
+    if (not all(os.getenv(f"AI_GROQ_{check}_VERIFIED") == "true" for check in checks)
+            or not os.getenv("AI_GROQ_REVIEW_REFERENCE", "").strip()):
+        raise DocumentError("Document AI processing is awaiting a privacy review. No provider request was sent.",
+                            503, "provider_review_required")
+
 async def complete(client, purpose, messages, schema, output_tokens):
+    verify_processing_review()
     model = model_for(purpose)
     response_format = {"type": "json_schema", "json_schema": {
         "name": purpose.title() + "Extraction", "schema": schema, "strict": False}}
@@ -66,6 +76,7 @@ async def complete(client, purpose, messages, schema, output_tokens):
         await limiter.reserve(model, tokens)
         logger.info("stage=model_request purpose=%s model=%s estimated_tokens=%d output_limit=%d", purpose, model, tokens, output_tokens)
         try:
+            verify_processing_review()
             return await client.chat.completions.create(model=model, messages=messages,
                 response_format=response_format, temperature=0, max_completion_tokens=output_tokens)
         except RateLimitError as exc:
