@@ -14,9 +14,13 @@ from ..utils.documents import DocumentError
 from .local_review import verify_local_review
 
 logger = logging.getLogger(__name__)
-SCHEMA_REPAIR_PROMPT = ("The provider rejected the preceding output for JSON schema validation. Return the complete supplied "
-    "schema, including every required property and nested property. Use null only where nullable, and "
-    "empty arrays for absent warnings/conflicts. Do not add prose or change source facts.")
+SCHEMA_REPAIR_PROMPT = ("The preceding JSON data failed validation. Return ONE JSON DATA OBJECT conforming to the response schema, "
+    "including required nested values. NEVER return the schema definition or prose. Do not invent facts. "
+    "Use null only where nullable and empty arrays when no items exist. The exact top-level DATA fields are: ")
+
+
+def schema_repair_message(schema):
+    return SCHEMA_REPAIR_PROMPT + ', '.join(schema.get('properties', {})) + '.'
 
 
 def estimate_tokens(value):
@@ -184,7 +188,7 @@ async def complete(client, purpose, messages, schema, output_tokens, *, on_rejec
                                    purpose, missing, ",".join(errors) or "none")
             if (not attempt and exc.status_code == 400 and isinstance(detail, dict)
                     and detail.get("code") == "json_validate_failed"):
-                messages.append({"role": "user", "content": SCHEMA_REPAIR_PROMPT})
+                messages.append({"role": "user", "content": schema_repair_message(schema)})
                 logger.warning("stage=model_schema_retry purpose=%s model=%s", purpose, model)
                 continue
             raise
