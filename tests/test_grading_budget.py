@@ -26,7 +26,9 @@ class GradingBudgetTests(unittest.IsolatedAsyncioTestCase):
         module = sample().model_dump()
         grading = PARTIALS["grading"].model_validate({key: module[key] for key in PARTIALS["grading"].model_fields if key in module})
         values = grading.model_dump()
-        assessments = GRADING_PARTIALS["assessments"].model_validate({key: values[key] for key in GRADING_PARTIALS["assessments"].model_fields})
+        definitions = [{key: value for key, value in assessment.items() if key not in {"weight", "score", "completed"}}
+                       for assessment in values["assessments"]]
+        assessments = GRADING_PARTIALS["assessments"].model_validate({"assessments": definitions, "warnings": [], "conflicts": []})
         rules = GRADING_PARTIALS["rules"].model_validate({key: values[key] for key in GRADING_PARTIALS["rules"].model_fields})
         blocks = [{"content": "Synthetic original evidence"}]
         with patch("app.ai.generate_module.run_worker", new=AsyncMock(side_effect=[DocumentError("Budget", 413, "request_budget_exceeded"), assessments, rules])) as worker:

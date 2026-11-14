@@ -14,7 +14,7 @@ from ..utils.documents import DocumentError
 from ..utils.validation import validate_module
 from .evidence import collect_evidence
 from .provider import complete
-from .partials import PARTIALS, GRADING_PARTIALS
+from .partials import PARTIALS, GRADING_PARTIALS, GRADING_EXTRACTION
 from .source_rules import link_source_rules
 from .source_calendar import ground_semester_end, ground_exam_dates
 from .source_ranges import source_range_errors
@@ -32,13 +32,13 @@ Never invent dates, marks, weights, thresholds, contacts or rules. Missing requi
 missing required numbers: -1; missing optional fields: null/omit. Warn about each omission with source/page.
 hasExam requires explicit evidence; unknown: false plus warning. Practical exams alone do not imply hasExam.
 No student scores/completion.
-moduleId: lowercase alphanumeric code. Assessment IDs: stable module-prefixed names. Keep categories
+moduleId: lowercase alphanumeric code. Assessment IDs: stable module-prefixed names. Keep categories consistent.
 Use moduleIdentity.moduleId as the exact prefix for generated assessment and formula IDs when supplied.
-consistent. Formula componentId must equal an assessment ID or <moduleId>-<category> with exact category.
+Formula componentId must equal an assessment ID or <moduleId>-<category> with exact category.
 For individual participation weights, link the exact percentages to assessment IDs in formula components,
 even without a 'participation formula' heading. Pooled category weights belong in formula components;
-individual assessment weight is then 0. Never normalize weights, invent assessments or assume maxScore 100.
-Exam assessment weight is its participation contribution: use 0 when excluded from the participation plan.
+the server projects the app's assessment-weight fields from that formula. Assessment definitions do not
+independently own weights or personal progress. Never normalize weights, invent assessments or assume maxScore 100.
 The separate final exam weighting belongs only in finalMarkFormula; omit that formula if unstated.
 Participation mark and examination mark in a final-mark split are not two extra assessments. Never create
 an attendance assessment from a participation-mark heading without an actual stated attendance assessment.
@@ -80,7 +80,7 @@ async def run_worker(client, purpose, blocks, identity=None, feedback=None, *, s
         messages.append({"role": "user", "content": "The prior assembly failed these checks. Re-extract your fields from the evidence and correct these issues without inventing facts: " + json.dumps(feedback)})
     for attempt in range(2):
         response = await complete(client, purpose, messages, schema,
-                                  output_tokens or (2500 if purpose == "grading" else 1200))
+                                  output_tokens or (2500 if purpose == "grading" else 1800))
         raw = response.choices[0].message.content or ""
         if response.choices[0].finish_reason != "stop":
             raise DocumentError("The extraction was incomplete. Upload a smaller document set.", 422, "incomplete_output")
@@ -117,7 +117,8 @@ async def run_worker(client, purpose, blocks, identity=None, feedback=None, *, s
 
 async def run_grading(client, blocks, identity, feedback=None):
     try:
-        return await run_worker(client, "grading", blocks, identity, feedback)
+        part = await run_worker(client, "grading", blocks, identity, feedback, schema_type=GRADING_EXTRACTION)
+        return project_grading(part, identity)
     except DocumentError as error:
         if error.code != "request_budget_exceeded":
             raise
@@ -133,7 +134,9 @@ async def run_grading(client, blocks, identity, feedback=None):
               "attendance assessment from a participation-mark heading. "
               "Preserve unclear conditional wording in dataNote with a review warning; ambiguity alone is not a contradiction "
               "and must not become executable arithmetic. A source conflict requires opposing facts for the same quantity and conditions. "
-              "An exam's assessment weight is its participation contribution (0 if excluded), not its separate final-mark weight. "
+              "Assessment definitions own no weights or personal progress. participationFormula alone owns participation "
+              "contributions; finalMarkFormula separately owns the final participation/exam split. Never halve participation "
+              "percentages to turn them into final-mark contributions. The server projects legacy assessment-weight fields. "
               "Assessment references are ID-linking metadata, never independent source evidence or conflicts. "
               "If the final exam/participation split is unstated, finalMarkFormula must be null, not negative weights. "
               "No personal scores/completion. "
@@ -144,10 +147,26 @@ async def run_grading(client, blocks, identity, feedback=None):
                                                     for a in assessments.assessments]}
     rules = await run_worker(client, "grading", blocks, linked, feedback,
         schema_type=GRADING_PARTIALS["rules"], output_tokens=2500, system_prompt=prompt)
-    return PARTIALS["grading"].model_validate({
+    return project_grading(GRADING_EXTRACTION.model_validate({
         **assessments.model_dump(exclude={"warnings", "conflicts"}),
         **rules.model_dump(exclude={"warnings", "conflicts"}),
-        "warnings": list(dict.fromkeys(assessments.warnings + rules.warnings)), "conflicts": []})
+        "warnings": list(dict.fromkeys(assessments.warnings + rules.warnings)), "conflicts": []}), identity)
+
+
+def project_grading(part, identity):
+    """Project duplicate app fields from the owned formula; never normalize it."""
+    values = part.model_dump()
+    module_id = identity.get("moduleId") or "".join(c for c in identity["code"].lower() if c.isascii() and c.isalnum())
+    components = part.participationFormula.components
+    for assessment in values["assessments"]:
+        individual = []
+        for component in components:
+            slug = component.componentId.removeprefix(module_id + "-")
+            pooled = any(item.category == slug for item in part.assessments)
+            if component.componentId == assessment["id"] and not pooled:
+                individual.append(component)
+        assessment["weight"] = individual[0].weight if len(individual) == 1 else 0
+    return PARTIALS["grading"].model_validate(values)
 
 
 async def run_identity(client, blocks):

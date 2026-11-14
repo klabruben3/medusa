@@ -72,14 +72,23 @@ semester-test range to its first day. A source-range check now feeds that mismat
 into the same bounded semantic repair, without guessing years or silently replacing
 dates. Multiple differently stated ranges require course/group reconciliation and
 are not automatically called contradictory facts. The complete grading/date result
-is still under real-test verification at this checkpoint.
+is still under real-test verification at this checkpoint. Run
+`20261114T160112961333Z` failed semantic validation after its bounded repair;
+no draft was accepted. Its diagnostics exposed competing representations of
+participation and final-mark percentages. Internal assessment definitions now
+exclude independent weights and personal progress. The participation formula owns
+weights; the server projects the unchanged public assessment-weight fields from
+direct formula links, leaving pooled/excluded contributions at zero. The formula
+is never normalized or silently replaced. This keeps the public Module/database
+contract while removing duplicated model ownership. Identity/calendar completions
+have 1,800 tokens, still admitted within the unchanged 8,000-token account budget.
 No academic module
 was saved and no authenticated hosted import, OCR acceptance or browser recovery
 is claimed. Across the wider 19-document corpus, 14 normalized locally, three need
 unavailable local OCR, one disallows encrypted extraction, and one exceeds the
 existing page limit. Those limits were not bypassed.
 
-All 80 focused regression tests passed, covering explicit date ranges, source identity, unlinked weights, calendar source anchors, review scope/expiry/key/origin,
+All 84 focused regression tests passed, covering weight ownership/projection, explicit date ranges, source identity, unlinked weights, calendar source anchors, review scope/expiry/key/origin,
 bounded retries, evidence coverage/continuations, source links, grading budgets,
 validation, durable jobs and account isolation. See the companion Academiq change
 for `dataNote` persistence and review UI; existing Studio otherwise discarded those

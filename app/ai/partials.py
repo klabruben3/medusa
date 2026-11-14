@@ -1,7 +1,7 @@
 """Worker fields are selected from Module, never maintained as duplicate schemas."""
 from copy import deepcopy
 from pydantic import create_model, Field, field_validator
-from ..types.schema import BaseModel, Module
+from ..types.schema import BaseModel, Module, AssessmentComponent
 
 FIELDS = {
     "identity": ("code", "name", "lecturer", "email", "office", "consultationHours", "groups"),
@@ -31,8 +31,17 @@ def partial_model(purpose, names=None):
 
 
 PARTIALS = {purpose: partial_model(purpose) for purpose in FIELDS}
+ASSESSMENT_DEFINITION = create_model("AssessmentDefinition", __base__=BaseModel, **{
+    name: (field.annotation, deepcopy(field)) for name, field in AssessmentComponent.model_fields.items()
+    if name not in {"weight", "score", "completed"}})
+
+def definition_part(purpose, names=None):
+    return create_model(purpose.title() + "DefinitionPart", __base__=partial_model(purpose, names),
+                        assessments=(list[ASSESSMENT_DEFINITION], Field(default_factory=list)))
+
+GRADING_EXTRACTION = definition_part("grading")
 GRADING_PARTIALS = {
-    "assessments": partial_model("grading_assessments", ("assessments",)),
+    "assessments": definition_part("grading_assessments", ("assessments",)),
     "rules": partial_model("grading_rules", tuple(name for name in FIELDS["grading"] if name != "assessments")),
 }
 
