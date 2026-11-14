@@ -56,7 +56,12 @@ Specific exam dates additionally require a module-scoped exam slot; general
 university examination periods cannot become a scheduled module exam.
 
 This is one successful grading/assessment worker run, not general or repeated-run reliability.
-A fresh full classification run is pending at this checkpoint. No academic module
+Fresh full run `20261114T152202517126Z` completed in about 19 minutes, including
+bounded provider schema recovery, batch splitting and grading repair. It passed
+24/25 checks and Studio's parser. Its remaining defect was the general exam-period
+start becoming a module exam date. That process started before the calendar-anchor
+fix; a current-worker run against its newly classified evidence is pending.
+No academic module
 was saved and no authenticated hosted import, OCR acceptance or browser recovery
 is claimed. Across the wider 19-document corpus, 14 normalized locally, three need
 unavailable local OCR, one disallows encrypted extraction, and one exceeds the
