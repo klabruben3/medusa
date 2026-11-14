@@ -12,6 +12,19 @@ def response(value, finish="stop"):
 
 
 class EvidenceTests(unittest.IsolatedAsyncioTestCase):
+    def test_grading_sentence_continuation_keeps_source_order_without_crossing_pages(self):
+        from app.ai.evidence import preserve_continuations
+        def block(identifier, text, page=1):
+            return {"id": identifier, "content": text, "type": "paragraph", "source_file": "guide.pdf", "page": page}
+        start = block("s0-b0-part0", "Each of the following marks will be 50%")
+        continuation = block("s0-b1-part0", "of the final mark:")
+        end = block("s0-b2-part0", "Participation mark and examination mark.")
+        contexts = {"identity": [], "calendar": [], "grading": [end, start]}
+        result = preserve_continuations(contexts, [start, continuation, end])
+        self.assertEqual([b["id"] for b in result["grading"]], [start["id"], continuation["id"], end["id"]])
+        other_page = {**continuation, "page": 2}
+        self.assertNotIn(other_page, preserve_continuations(contexts, [start, other_page, end])["grading"])
+        self.assertEqual(contexts["grading"], [end, start])
     async def test_review_and_budget_failures_are_not_masked_as_schema_retries(self):
         block = {"id": "a", "content": "Synthetic evidence", "source_file": "fixture", "page": 1}
         for code in ("provider_review_required", "request_budget_exceeded"):

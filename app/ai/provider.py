@@ -1,5 +1,6 @@
 """Bounded Groq requests and per-model admission; never log prompts or responses."""
 import asyncio
+from copy import deepcopy
 import json
 import logging
 import math
@@ -58,6 +59,29 @@ class ModelLimiter:
 limiter = ModelLimiter()
 
 
+def strict_schema(schema):
+    """Groq strict mode requires every object property, including nullable ones."""
+    value = deepcopy(schema)
+    def walk(node):
+        if isinstance(node, dict):
+            node.pop("title", None)
+            node.pop("default", None)
+            if node.get("type") == "object":
+                node["required"] = list(node.get("properties", {}))
+                node["additionalProperties"] = False
+            for key, item in node.items():
+                if key in {"properties", "$defs"}:
+                    for child in item.values():
+                        walk(child)
+                else:
+                    walk(item)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+    walk(value)
+    return value
+
+
 
 def verify_processing_review(client=None):
     """Fail closed until the actual provider account and minor safeguards have been reviewed."""
@@ -79,16 +103,26 @@ def verify_processing_review(client=None):
 async def complete(client, purpose, messages, schema, output_tokens):
     verify_processing_review(client)
     model = model_for(purpose)
+    strict = model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
     response_format = {"type": "json_schema", "json_schema": {
-        "name": purpose.title() + "Extraction", "schema": schema, "strict": False}}
-    tokens = estimate_tokens({"messages": messages, "response_format": response_format}) + output_tokens
+        "name": purpose.title() + "Extraction", "schema": strict_schema(schema) if strict else schema, "strict": strict}}
+    messages = list(messages)
     for attempt in range(2):
+        tokens = estimate_tokens({"messages": messages, "response_format": response_format}) + output_tokens
         await limiter.reserve(model, tokens)
         logger.info("stage=model_request purpose=%s model=%s estimated_tokens=%d output_limit=%d", purpose, model, tokens, output_tokens)
         try:
             verify_processing_review(client)
-            return await client.chat.completions.create(model=model, messages=messages,
-                response_format=response_format, temperature=0, max_completion_tokens=output_tokens)
+            # GPT-OSS reasoning consumes the same bounded completion allowance.
+            # Keep room for the required JSON; custom models retain their defaults.
+            options = {"reasoning_effort": "low"} if strict else {}
+            response = await client.chat.completions.create(model=model, messages=messages,
+                response_format=response_format, temperature=0, max_completion_tokens=output_tokens, **options)
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                logger.info("stage=model_response purpose=%s input_tokens=%s output_tokens=%s", purpose,
+                            getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None))
+            return response
         except RateLimitError as exc:
             if attempt:
                 raise
@@ -105,4 +139,37 @@ async def complete(client, purpose, messages, schema, output_tokens):
         except APIStatusError as exc:
             # Metadata only. Raw provider errors may include generated source text.
             logger.warning("stage=model_rejected purpose=%s model=%s upstream_status=%s", purpose, model, exc.status_code)
+            body = exc.body if isinstance(exc.body, dict) else {}
+            detail = body.get("error", body)
+            failed = detail.get("failed_generation") if isinstance(detail, dict) else None
+            if isinstance(failed, str):
+                try:
+                    generated = json.loads(failed)
+                    valid_json = True
+                except ValueError:
+                    generated, valid_json = None, False
+                logger.warning("stage=model_rejection_metadata purpose=%s failed_characters=%d valid_json=%s root_type=%s",
+                               purpose, len(failed), valid_json, type(generated).__name__)
+                if isinstance(generated, dict):
+                    missing = len(set(response_format["json_schema"]["schema"].get("required", [])) - set(generated))
+                    from .partials import PARTIALS, GRADING_PARTIALS
+                    from pydantic import ValidationError
+                    kind = next((item for item in [*PARTIALS.values(), *GRADING_PARTIALS.values()]
+                                 if set(item.model_fields) == set(schema.get("properties", {}))), None)
+                    errors = []
+                    if kind is not None:
+                        try:
+                            kind.model_validate(generated)
+                        except ValidationError as error:
+                            errors = sorted({item["type"] for item in error.errors()})
+                    logger.warning("stage=model_rejection_shape purpose=%s missing_root_fields=%d validation_types=%s",
+                                   purpose, missing, ",".join(errors) or "none")
+            if (not attempt and exc.status_code == 400 and isinstance(detail, dict)
+                    and detail.get("code") == "json_validate_failed"):
+                messages.append({"role": "user", "content":
+                    "The provider rejected the preceding output for JSON schema validation. Return the complete supplied "
+                    "schema, including every required property and nested property. Use null only where nullable, and "
+                    "empty arrays for absent warnings/conflicts. Do not add prose or change source facts."})
+                logger.warning("stage=model_schema_retry purpose=%s model=%s", purpose, model)
+                continue
             raise

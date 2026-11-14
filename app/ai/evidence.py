@@ -160,6 +160,32 @@ async def extract_batch(client, blocks, depth=0):
     return facts
 
 
+def preserve_continuations(contexts, all_sections):
+    """Keep a short source continuation after a selected grading fragment."""
+    contexts = {purpose: list(items) for purpose, items in contexts.items()}
+    positions = {block["id"]: index for index, block in enumerate(all_sections)}
+    selected = {item["id"].rstrip("ab") for item in contexts["grading"]}
+    present = {(item["source_file"], item["page"], item["id"]) for item in contexts["grading"]}
+    for index, block in enumerate(all_sections[:-1]):
+        if block["id"] not in selected or block.get("type") == "table":
+            continue
+        text = block["content"].rstrip()
+        if not text:
+            continue
+        following = all_sections[index + 1]
+        content = following["content"].strip()
+        key = (following["source_file"], following["page"], following["id"])
+        once = bool(re.search(r"participation.*supplement", text, re.I) and re.search(r"\bonly once\b", content, re.I))
+        continuation = not re.search(r"[.!?:;)\]}]$", text) and (content[:1].islower() or text.endswith("-"))
+        if (key not in present and following["source_file"] == block["source_file"]
+                and following["page"] == block["page"] and following.get("type") != "table"
+                and 0 < len(content) <= 240 and (continuation or once)):
+            contexts["grading"].append(following)
+            present.add(key)
+    contexts["grading"].sort(key=lambda item: (positions.get(item["id"].rstrip("ab"), len(positions)), item["id"]))
+    return contexts
+
+
 async def collect_evidence(client, sources):
     contexts = {purpose: [] for purpose in ("identity", "grading", "calendar")}
     all_sections = sections(sources)
@@ -199,4 +225,4 @@ async def collect_evidence(client, sources):
                 if key not in seen:
                     seen.add(key)
                     contexts[purpose].append(block)
-    return contexts, ["Every document section was submitted for evidence extraction. Review source references: model extraction can still omit or misinterpret facts."]
+    return preserve_continuations(contexts, all_sections), ["Every document section was submitted for evidence extraction. Review source references: model extraction can still omit or misinterpret facts."]

@@ -10,9 +10,9 @@ FIELDS = {
 }
 
 
-def partial_model(purpose):
+def partial_model(purpose, names=None):
     fields = {name: (Module.model_fields[name].annotation, deepcopy(Module.model_fields[name]))
-              for name in FIELDS[purpose]}
+              for name in (FIELDS[purpose] if names is None else names)}
     fields["warnings"] = (list[str], Field(default_factory=list))
     # Conflicting numeric/identity facts cannot safely be represented as one answer.
     fields["conflicts"] = (list[str], Field(default_factory=list))
@@ -24,6 +24,10 @@ def partial_model(purpose):
 
 
 PARTIALS = {purpose: partial_model(purpose) for purpose in FIELDS}
+GRADING_PARTIALS = {
+    "assessments": partial_model("grading_assessments", ("assessments",)),
+    "rules": partial_model("grading_rules", tuple(name for name in FIELDS["grading"] if name != "assessments")),
+}
 
 QUERIES = {
     "identity": [
