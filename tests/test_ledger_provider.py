@@ -3,13 +3,20 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from groq import APIStatusError, RateLimitError
 from app.ai.fact_ledger import ObservationBatch, messages_for, request_cost
-from app.ai.provider import complete
+from app.ai.provider import complete, strict_schema
 from test_evidence import response
 from test_fact_ledger import block
 from app.main import provider_limit_message
 
 
 class LedgerProviderTests(unittest.IsolatedAsyncioTestCase):
+    def test_number_union_removes_only_redundant_unconstrained_integer(self):
+        source = {'anyOf': [{'type': 'integer'}, {'type': 'number'}, {'type': 'string'}]}
+        self.assertEqual(strict_schema(source), {'anyOf': [{'type': 'number'}, {'type': 'string'}]})
+        self.assertEqual(len(source['anyOf']), 3)
+        constrained = {'anyOf': [{'type': 'integer', 'minimum': 1}, {'type': 'number', 'maximum': 0}]}
+        self.assertEqual(strict_schema(constrained), constrained)
+
     async def test_daily_and_long_retry_limits_do_not_send_premature_second_request(self):
         review = {f'AI_GROQ_{name}_VERIFIED': 'true' for name in
                   ('NO_TRAINING', 'RETENTION', 'INTERNATIONAL_TRANSFER', 'MINOR_SAFEGUARDS')}

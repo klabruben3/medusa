@@ -141,6 +141,8 @@ def parse_value(kind, field, raw):
     if value is None:
         raise ValueError('omit unknown values')
     annotation = str if kind == 'note' else bool if kind == 'examRule' else MODELS[kind].model_fields[field].annotation
+    if field in {'dropLowest', 'minimumCompleted', 'totalInCategory'} and isinstance(value, float) and value.is_integer():
+        value = int(value)  # JSON 8.0 and 8 represent the same whole count.
     adapter = TypeAdapter(annotation)
     value = adapter.validate_python(value, strict=True)
     if isinstance(value, (int, float)) and not isinstance(value, bool) and (not math.isfinite(value) or value < 0):

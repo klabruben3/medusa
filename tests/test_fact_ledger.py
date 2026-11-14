@@ -109,6 +109,9 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
 
     def test_native_value_types_preserve_integer_rules_and_structured_slots(self):
         self.assertEqual(parse_value('formula', 'minimumCompleted', 8), 8)
+        self.assertEqual(parse_value('formula', 'minimumCompleted', 8.0), 8)
+        with self.assertRaises(ValueError):
+            parse_value('formula', 'minimumCompleted', 8.5)
         self.assertEqual(parse_value('module', 'hasExam', True), True)
         self.assertEqual(parse_value('assessment', 'name', 'Class test 1'), 'Class test 1')
         self.assertEqual(parse_value('assessment', 'slots', [{'date': '2026-03-17', 'label': 'Group A'}]),

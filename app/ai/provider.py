@@ -92,6 +92,11 @@ def strict_schema(schema):
                         walk(child)
                 else:
                     walk(item)
+            # JSON number includes integers. Groq rejects an overlapping union
+            # of both unconstrained types; the equivalent number branch suffices.
+            choices = node.get('anyOf')
+            if isinstance(choices, list) and {'type': 'integer'} in choices and {'type': 'number'} in choices:
+                node['anyOf'] = [choice for choice in choices if choice != {'type': 'integer'}]
         elif isinstance(node, list):
             for item in node:
                 walk(item)
