@@ -41,6 +41,15 @@ def request_budget():
         raise DocumentError("GROQ_TPM_BUDGET must be an integer.", 503, "invalid_token_budget") from None
 
 
+def rate_limit_scope(error):
+    body = getattr(error, 'body', None)
+    detail = body.get('error', body) if isinstance(body, dict) else {}
+    message = str(detail.get('message', '')).lower() if isinstance(detail, dict) else ''
+    return next((scope for text, scope in [('tokens per day', 'tokens_per_day'),
+        ('requests per day', 'requests_per_day'), ('tokens per minute', 'tokens_per_minute'),
+        ('requests per minute', 'requests_per_minute')] if text in message), 'unspecified')
+
+
 class ModelLimiter:
     def __init__(self, clock=time.monotonic, sleep=asyncio.sleep):
         self.entries = defaultdict(deque)
@@ -146,10 +155,16 @@ async def complete(client, purpose, messages, schema, output_tokens, *, on_rejec
         except RateLimitError as exc:
             if attempt:
                 raise
+            scope = rate_limit_scope(exc)
+            if scope in {'tokens_per_day', 'requests_per_day'}:
+                logger.warning('stage=model_quota_exhausted scope=%s', scope)
+                raise  # An immediate retry cannot restore a daily allowance.
             try:
-                delay = min(120, max(1, float(exc.response.headers.get("retry-after", "61"))))
+                delay = max(1, float(exc.response.headers.get("retry-after", "61")))
             except (TypeError, ValueError):
                 delay = 61
+            if delay > 120:
+                raise  # Do not retry earlier than the provider's requested delay.
             await asyncio.sleep(delay)
         except APIConnectionError:
             if attempt:

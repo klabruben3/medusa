@@ -1,14 +1,33 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 import httpx
-from groq import APIStatusError
+from groq import APIStatusError, RateLimitError
 from app.ai.fact_ledger import ObservationBatch, messages_for, request_cost
 from app.ai.provider import complete
 from test_evidence import response
 from test_fact_ledger import block
+from app.main import provider_limit_message
 
 
 class LedgerProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_daily_and_long_retry_limits_do_not_send_premature_second_request(self):
+        review = {f'AI_GROQ_{name}_VERIFIED': 'true' for name in
+                  ('NO_TRAINING', 'RETENTION', 'INTERNATIONAL_TRANSFER', 'MINOR_SAFEGUARDS')}
+        review['AI_GROQ_REVIEW_REFERENCE'] = 'synthetic-ledger-limit-test'
+        for message, retry in [('PRIVATE_ORG tokens per day', '61'), ('PRIVATE_ORG tokens per minute', '180')]:
+            error = RateLimitError('PRIVATE_ORG', response=httpx.Response(429, headers={'retry-after': retry},
+                request=httpx.Request('POST', 'https://api.groq.com')), body={'error': {'message': message}})
+            client = AsyncMock()
+            client.chat.completions.create.side_effect = error
+            with self.subTest(message=message), patch.dict('os.environ', review), patch('app.ai.provider.limiter.reserve', new=AsyncMock()), patch('app.ai.provider.asyncio.sleep', new=AsyncMock()) as sleep:
+                with self.assertRaises(RateLimitError):
+                    await complete(client, 'facts', messages_for([block()]), ObservationBatch.model_json_schema(), 2600)
+                self.assertEqual(client.chat.completions.create.await_count, 1)
+                sleep.assert_not_awaited()
+                self.assertNotIn('PRIVATE_ORG', provider_limit_message(error))
+                if 'per day' in message:
+                    self.assertIn('daily', provider_limit_message(error))
+
     async def test_actual_repair_request_matches_planned_budget_and_asks_for_data(self):
         review = {f'AI_GROQ_{name}_VERIFIED': 'true' for name in
                   ('NO_TRAINING', 'RETENTION', 'INTERNATIONAL_TRANSFER', 'MINOR_SAFEGUARDS')}

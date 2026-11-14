@@ -11,7 +11,7 @@ def block(identifier='a', content='Class test 1: 40 marks, 30%.', file='guide.pd
     return {'id': identifier, 'source_file': file, 'page': 1, 'type': 'paragraph', 'content': content}
 
 
-def fact(identifier='a', value='40', quote='40 marks'):
+def fact(identifier='a', value=40, quote='40 marks'):
     return {'kind': 'assessment', 'key': 'class-test-1', 'values': [{'field': 'maxScore', 'value': value}],
             'evidence': [{'block': identifier, 'quote': quote}]}
 
@@ -31,12 +31,12 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
 
     def test_coverage_foreign_quote_and_wrong_numeric_value_fail_closed(self):
         for value in (batch(covered=['wrong']), batch(covered=['a', 'a']),
-                      batch([fact(identifier='foreign')]), batch([fact(quote='invented')]), batch([fact(value='99')])):
+                      batch([fact(identifier='foreign')]), batch([fact(quote='invented')]), batch([fact(value=99)])):
             with self.subTest(value=value.model_dump()), self.assertRaises(ValueError):
                 validate_batch(value, [block()])
 
     def test_typed_fields_reject_unknown_ownership_progress_and_sentinels(self):
-        for kind, field, value in [('assessment', 'maxScore', '-1'), ('assessment', 'maxScore', 'true'),
+        for kind, field, value in [('assessment', 'maxScore', -1), ('assessment', 'maxScore', True),
                                    ('module', 'maxScore', '40'), ('assessment', 'score', '30'),
                                    ('formula', 'weight', 'NaN'), ('module', 'hasExam', '"true"')]:
             with self.subTest(field=field, value=value), self.assertRaises((ValueError, KeyError)):
@@ -50,7 +50,7 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
 
     def test_formula_and_entity_keys_are_restricted(self):
         for key in ('https://bad.example', '../../secret', 'another-module'):
-            value = {'kind': 'formula', 'key': key, 'values': [{'field': 'weight', 'value': '30'}],
+            value = {'kind': 'formula', 'key': key, 'values': [{'field': 'weight', 'value': 30}],
                      'evidence': [{'block': 'a', 'quote': '30%'}]}
             with self.subTest(key=key), self.assertRaises(ValueError):
                 validate_batch(batch([value]), [block()])
@@ -62,7 +62,7 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(len(result[0]['candidates']), 1)
         self.assertEqual(len(result[0]['candidates'][0]['evidence']), 2)
-        third = validate_batch(batch([fact('c', '50', '50 marks')], ['c']), [block('c', '50 marks')])
+        third = validate_batch(batch([fact('c', 50, '50 marks')], ['c']), [block('c', '50 marks')])
         self.assertEqual({v['value'] for v in reduce_ledger([first, third])[0]['candidates']}, {40, 50})
 
     def test_planner_covers_all_blocks_without_cropping(self):
@@ -91,11 +91,11 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result, [batch()])
             provider.assert_not_awaited()
             with self.assertRaises(ValueError):
-                await extract_ledger(None, [block()], load_batch=AsyncMock(return_value=batch([fact(value='99')])))
+                await extract_ledger(None, [block()], load_batch=AsyncMock(return_value=batch([fact(value=99)])))
             provider.assert_not_awaited()
 
     async def test_bad_single_block_output_is_not_repaired_into_facts(self):
-        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(batch([fact(value='99')]).model_dump(exclude={'covered'})))) as provider:
+        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(batch([fact(value=99)]).model_dump(exclude={'covered'})))) as provider:
             with self.assertRaises(DocumentError) as error:
                 await extract_ledger(None, [block()])
         self.assertEqual(error.exception.code, 'ledger_unverified')
@@ -106,3 +106,12 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
         for group in plan_batches(blocks):
             self.assertLessEqual(request_cost(group, retry=True), 7500)
             self.assertGreater(request_cost(group, retry=True), request_cost(group))
+
+    def test_native_value_types_preserve_integer_rules_and_structured_slots(self):
+        self.assertEqual(parse_value('formula', 'minimumCompleted', 8), 8)
+        self.assertEqual(parse_value('module', 'hasExam', True), True)
+        self.assertEqual(parse_value('assessment', 'name', 'Class test 1'), 'Class test 1')
+        self.assertEqual(parse_value('assessment', 'slots', [{'date': '2026-03-17', 'label': 'Group A'}]),
+                         [{'date': '2026-03-17', 'time': None, 'label': 'Group A'}])
+        with self.assertRaises(ValueError):
+            parse_value('formula', 'weight', float('inf'))

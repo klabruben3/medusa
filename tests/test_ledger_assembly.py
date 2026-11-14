@@ -10,7 +10,7 @@ def fixture(missing_maximum=False, conflict=False):
     text = 'ABC123 Example. No exam. Test 1 maximum 40. Test 1 contributes 100%. Final pass 50%. Another source states 60%.'
     def observation(kind, key, values, quote=text):
         observations.append({'kind': kind, 'key': key,
-            'values': [{'field': field, 'value': json.dumps(value)} for field, value in values.items()],
+            'values': [{'field': field, 'value': value} for field, value in values.items()],
             'evidence': [{'block': 'a', 'quote': quote}]})
     observation('module', 'module', {'code': 'ABC123', 'name': 'Example', 'hasExam': False})
     values = {'name': 'Test 1', 'type': 'class-test', 'category': 'tests'}
