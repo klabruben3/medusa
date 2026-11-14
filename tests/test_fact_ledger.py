@@ -2,7 +2,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, patch
 from app.ai.fact_ledger import (FactBatch, compact_sources, validate_batch, parse_value,
-    reduce_ledger, plan_batches, extract_ledger, request_cost)
+    reduce_ledger, plan_batches, extract_ledger, request_cost, ObservationBatch, materialize, indexed_sources, PROMPT)
 from app.utils.documents import DocumentError
 from test_evidence import response
 
@@ -18,6 +18,13 @@ def fact(identifier='a', value=40, quote='40 marks'):
 
 def batch(observations=None, covered=None):
     return FactBatch.model_validate({'covered': covered or ['a'], 'observations': observations or [fact()]})
+
+
+def indexed_batch(value):
+    data = value.model_dump(exclude={'covered'})
+    for observation in data['observations']:
+        observation['evidence'] = [{'block': cite['block'], 'row': None} for cite in observation['evidence']]
+    return data
 
 
 class LedgerTests(unittest.IsolatedAsyncioTestCase):
@@ -80,9 +87,10 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
             provider.assert_not_awaited()
 
     async def test_verified_fact_batch_calls_provider_once(self):
-        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(batch().model_dump(exclude={'covered'})))) as provider:
+        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(indexed_batch(batch())))) as provider:
             result = await extract_ledger(None, [block()])
-        self.assertEqual(result, [batch()])
+        self.assertEqual(result[0].observations[0].values, batch().observations[0].values)
+        self.assertEqual(result[0].observations[0].evidence[0].quote, block()['content'])
         self.assertEqual(provider.await_count, 1)
 
     async def test_cache_is_revalidated_and_uses_no_provider_calls(self):
@@ -95,7 +103,7 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
             provider.assert_not_awaited()
 
     async def test_bad_single_block_output_is_not_repaired_into_facts(self):
-        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(batch([fact(value=99)]).model_dump(exclude={'covered'})))) as provider:
+        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(indexed_batch(batch([fact(value=99)]))))) as provider:
             with self.assertRaises(DocumentError) as error:
                 await extract_ledger(None, [block()])
         self.assertEqual(error.exception.code, 'ledger_unverified')
@@ -118,3 +126,41 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
                          [{'date': '2026-03-17', 'time': None, 'label': 'Group A'}])
         with self.assertRaises(ValueError):
             parse_value('formula', 'weight', float('inf'))
+
+    def test_indexed_tables_keep_cells_and_server_materializes_original_evidence(self):
+        rows = [['Assessment', 'Marks'], ['Class test 1', '40']]
+        source = {**block(content=json.dumps({'rows': rows}, ensure_ascii=False)), 'type': 'table'}
+        sent = indexed_sources([source])[0]['blocks'][0]
+        self.assertEqual([row['cells'] for row in sent['rows']], rows)
+        data = indexed_batch(batch())
+        data['observations'][0]['evidence'][0]['row'] = 1
+        result = materialize(ObservationBatch.model_validate(data), [source])
+        validate_batch(result, [source])
+        self.assertEqual(result.observations[0].evidence[0].quote, json.dumps(rows[1]))
+        self.assertEqual(source['content'], json.dumps({'rows': rows}))
+        data['observations'][0]['evidence'][0]['row'] = None
+        with self.assertRaises(ValueError):
+            materialize(ObservationBatch.model_validate(data), [source])
+        for row in (-1, 99):
+            data['observations'][0]['evidence'][0]['row'] = row
+            with self.subTest(row=row), self.assertRaises(ValueError):
+                materialize(ObservationBatch.model_validate(data), [source])
+
+    async def test_usage_is_observed_even_when_numeric_grounding_fails(self):
+        result = response(indexed_batch(batch([fact(value=99)])))
+        from types import SimpleNamespace
+        result.usage = SimpleNamespace(prompt_tokens=100, completion_tokens=50)
+        usage = AsyncMock()
+        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=result)):
+            with self.assertRaises(DocumentError):
+                await extract_ledger(None, [block()], on_response=usage)
+        usage.assert_awaited_once_with({'inputTokens': 100, 'outputTokens': 50})
+
+    def test_compact_schema_prompt_still_declares_domain_enums(self):
+        from app.types.schema import AssessmentType
+        from typing import get_args
+        self.assertIn('assessment.type must be one of:', PROMPT)
+        for value in get_args(AssessmentType):
+            self.assertIn(value, PROMPT)
+        with self.assertRaises(ValueError):
+            parse_value('assessment', 'type', 'test')
