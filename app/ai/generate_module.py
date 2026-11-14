@@ -15,7 +15,7 @@ from .evidence import collect_evidence
 from .provider import complete
 from .partials import PARTIALS, GRADING_PARTIALS
 from .source_rules import link_source_rules
-from .source_calendar import ground_semester_end
+from .source_calendar import ground_semester_end, ground_exam_dates
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -48,6 +48,9 @@ Dates: YYYY-MM-DD; times: HH:mm. Preserve ranges/sign-up slots; never guess year
 For calendar, semesterEnd requires semesterEndSource with an exact supplied blockId and short verbatim quote
 explicitly stating when the semester ends. Do not substitute an exam-period start, last assessment or teaching-week
 range. If no explicit semester-end statement exists, use an empty semesterEnd and null semesterEndSource, and warn.
+examDate likewise needs examDateSource with a verbatim module-specific exam slot, not a general university exam
+period. Unknown module exam dates must be null with a warning. Preserve a stated general period as a labelled
+opportunity only if its complete range is actually provided; never invent its end or a specific module exam slot.
 uploadYear is metadata, not evidence for a course date. Use the source title/year and preserve table-row
 continuations when linking dates to tests. Repeated overlap rows are context, not additional assessments.
 Warn with filename/page about missing facts and real conflicts. Never silently choose between conflicts.
@@ -152,8 +155,9 @@ def merge_parts(parts, warnings=(), source_contexts=None, calendar_contexts=None
                 part = link_source_rules(part, source_contexts)
         if purpose == "calendar" and calendar_contexts is not None:
             part = ground_semester_end(part, calendar_contexts)
+            part = ground_exam_dates(part, calendar_contexts, data["code"])
         notes.extend(part.warnings)
-        values = part.model_dump(exclude_none=True, exclude={"warnings", "conflicts", "semesterEndSource"})
+        values = part.model_dump(exclude_none=True, exclude={"warnings", "conflicts", "semesterEndSource", "examDateSource"})
         if data.keys() & values.keys():
             raise DocumentError("Extraction workers returned overlapping fields.", 502, "invalid_output")
         data.update(values)

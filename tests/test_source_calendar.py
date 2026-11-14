@@ -1,8 +1,29 @@
 import unittest
 from app.ai.partials import PARTIALS
-from app.ai.source_calendar import ground_semester_end
+from app.ai.source_calendar import ground_semester_end, ground_exam_dates
 
 class SourceCalendarTests(unittest.TestCase):
+    def exam(self, quote, end=None):
+        part=PARTIALS["calendar"].model_validate({"semesterStart":"", "semesterEnd":"", "examDate":"2026-10-28", "examDateEnd":end,
+            "examDateSource":{"blockId":"source-1","quote":quote}})
+        return part,[{"id":"source-1","content":quote,"source_file":"ABC123 guide.pdf"}]
+
+    def test_general_exam_period_is_not_a_module_exam_slot(self):
+        for quote in ("Examination period starts 28 October 2026.", "ABC123 examination period: 28 October 2026."):
+            part,blocks=self.exam(quote)
+            self.assertIsNone(ground_exam_dates(part,blocks,"ABC123").examDate)
+
+    def test_explicit_exam_slot_and_range_are_retained(self):
+        part,blocks=self.exam("Exam date: 28 October 2026.")
+        self.assertEqual(ground_exam_dates(part,blocks,"ABC123").examDate,"2026-10-28")
+        part,blocks=self.exam("ABC123 examination: 28 October 2026 – 29 October 2026.", "2026-10-29")
+        self.assertEqual(ground_exam_dates(part,blocks,"ABC123").examDateEnd,"2026-10-29")
+
+    def test_wrong_module_or_unstated_range_end_is_not_retained(self):
+        part,blocks=self.exam("Exam date: 28 October 2026.", "2026-10-29")
+        self.assertIsNone(ground_exam_dates(part,blocks,"ABC123").examDateEnd)
+        self.assertIsNone(ground_exam_dates(part,blocks,"OTHER456").examDate)
+
     def part(self, quote, day="2026-10-28", block="source-1"):
         return PARTIALS["calendar"].model_validate({"semesterStart":"", "semesterEnd":day,
             "semesterEndSource":{"blockId":block,"quote":quote}})

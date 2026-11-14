@@ -22,6 +22,7 @@ def partial_model(purpose, names=None):
     fields["conflicts"] = (list[str], Field(default_factory=list))
     if purpose == "calendar":
         fields["semesterEndSource"] = (CalendarSource | None, None)
+        fields["examDateSource"] = (CalendarSource | None, None)
     # A null diagnostic list means no diagnostics, not missing academic facts.
     normalize_notes = field_validator('warnings', 'conflicts', mode='before')(
         lambda value: [] if value is None else value)
