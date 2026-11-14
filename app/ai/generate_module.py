@@ -172,22 +172,29 @@ def link_individual_weights(part):
     })
 
 
-async def create_module(sources, ingestion_id=None):
+async def create_module(sources, ingestion_id=None, *, on_evidence=None):
     if not os.getenv("GROQ_API_KEY"):
         raise DocumentError("Medusa is missing GROQ_API_KEY. Set it in Render.", 503, "missing_groq_api_key")
     # Provider retries are explicitly budgeted by our scheduler, not hidden SDK calls.
     async with AsyncGroq(timeout=60, max_retries=0) as client:
         contexts, notes = await collect_evidence(client, sources)
-        parts = {}
-        parts["identity"] = await run_worker(client, "identity", contexts["identity"])
-        identity = {"code": parts["identity"].code, "name": parts["identity"].name}
-        for purpose in ("grading", "calendar"):
-            parts[purpose] = await run_worker(client, purpose, contexts[purpose], identity)
-        try:
-            return merge_parts(parts, notes)
-        except DocumentError as exc:
-            if exc.code != "invalid_grading":
-                raise
-            parts["grading"] = await run_worker(client, "grading", contexts["grading"], identity,
-                                                feedback=exc.validation_errors)
-            return merge_parts(parts, notes)
+        if on_evidence is not None:
+            await on_evidence(contexts, notes)
+        return await generate_from_contexts(client, contexts, notes)
+
+
+async def generate_from_contexts(client, contexts, notes):
+    """Same workers for fresh extraction or explicitly local diagnostic replay."""
+    parts = {}
+    parts["identity"] = await run_worker(client, "identity", contexts["identity"])
+    identity = {"code": parts["identity"].code, "name": parts["identity"].name}
+    for purpose in ("grading", "calendar"):
+        parts[purpose] = await run_worker(client, purpose, contexts[purpose], identity)
+    try:
+        return merge_parts(parts, notes)
+    except DocumentError as exc:
+        if exc.code != "invalid_grading":
+            raise
+        parts["grading"] = await run_worker(client, "grading", contexts["grading"], identity,
+                                            feedback=exc.validation_errors)
+        return merge_parts(parts, notes)

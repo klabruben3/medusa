@@ -7,8 +7,9 @@ import os
 import time
 from collections import defaultdict, deque
 
-from groq import APIStatusError, RateLimitError
+from groq import APIStatusError, RateLimitError, APIConnectionError
 from ..utils.documents import DocumentError
+from .local_review import verify_local_review
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +59,15 @@ limiter = ModelLimiter()
 
 
 
-def verify_processing_review():
+def verify_processing_review(client=None):
     """Fail closed until the actual provider account and minor safeguards have been reviewed."""
+    if verify_local_review(client):
+        return
     reference = os.getenv("AI_GROQ_REVIEW_REFERENCE", "").strip()
     # Iris enforces owner audience/deployment restrictions separately. Medusa's
     # registered-user authorization cannot inherit those scoped attestations.
     if (os.getenv("AI_REVIEW_SCOPE") is not None
-            or reference.lower().startswith(("owner-preview:", "owner-production:"))):
+            or reference.lower().startswith(("owner-preview:", "owner-production:", "local-nwu:"))):
         raise DocumentError("Document AI processing is awaiting an applicable review. No provider request was sent.",
                             503, "provider_review_required")
     checks = ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")
@@ -74,7 +77,7 @@ def verify_processing_review():
                             503, "provider_review_required")
 
 async def complete(client, purpose, messages, schema, output_tokens):
-    verify_processing_review()
+    verify_processing_review(client)
     model = model_for(purpose)
     response_format = {"type": "json_schema", "json_schema": {
         "name": purpose.title() + "Extraction", "schema": schema, "strict": False}}
@@ -83,7 +86,7 @@ async def complete(client, purpose, messages, schema, output_tokens):
         await limiter.reserve(model, tokens)
         logger.info("stage=model_request purpose=%s model=%s estimated_tokens=%d output_limit=%d", purpose, model, tokens, output_tokens)
         try:
-            verify_processing_review()
+            verify_processing_review(client)
             return await client.chat.completions.create(model=model, messages=messages,
                 response_format=response_format, temperature=0, max_completion_tokens=output_tokens)
         except RateLimitError as exc:
@@ -94,6 +97,11 @@ async def complete(client, purpose, messages, schema, output_tokens):
             except (TypeError, ValueError):
                 delay = 61
             await asyncio.sleep(delay)
+        except APIConnectionError:
+            if attempt:
+                raise
+            logger.warning("stage=model_transport_retry purpose=%s model=%s", purpose, model)
+            await asyncio.sleep(2)
         except APIStatusError as exc:
             # Metadata only. Raw provider errors may include generated source text.
             logger.warning("stage=model_rejected purpose=%s model=%s upstream_status=%s", purpose, model, exc.status_code)

@@ -12,6 +12,15 @@ def response(value, finish="stop"):
 
 
 class EvidenceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_review_and_budget_failures_are_not_masked_as_schema_retries(self):
+        block = {"id": "a", "content": "Synthetic evidence", "source_file": "fixture", "page": 1}
+        for code in ("provider_review_required", "request_budget_exceeded"):
+            with self.subTest(code=code), patch("app.ai.evidence.complete", side_effect=DocumentError("Unavailable", 503, code)) as request:
+                with self.assertRaises(DocumentError) as caught:
+                    await extract_batch(None, [block])
+                self.assertEqual(caught.exception.code, code)
+                self.assertEqual(request.call_count, 1)
+
     def test_section_boundaries_cover_all_source_characters(self):
         text = "\n".join(f"Assessment {i}: 40 marks. Toets. 文本" for i in range(200))
         result = sections([{"filename": "plan.txt", "text": text}])

@@ -109,6 +109,10 @@ async def extract_batch(client, blocks, depth=0):
         return [{"purpose": purpose, "content": originals[decision.blockId]["content"], "id": decision.blockId,
                  "source_file": originals[decision.blockId]["source_file"], "page": originals[decision.blockId]["page"]}
                 for decision in batch.decisions for purpose in dict.fromkeys(decision.purposes)]
+    except DocumentError:
+        # Configuration/review/budget errors inherit ValueError but are not
+        # malformed model JSON. Preserve their code and never retry classification.
+        raise
     except APIStatusError as exc:
         if exc.status_code not in {400, 413}:
             raise
