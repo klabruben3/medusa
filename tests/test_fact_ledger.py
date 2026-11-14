@@ -80,7 +80,7 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
             provider.assert_not_awaited()
 
     async def test_verified_fact_batch_calls_provider_once(self):
-        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(batch().model_dump()))) as provider:
+        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(batch().model_dump(exclude={'covered'})))) as provider:
             result = await extract_ledger(None, [block()])
         self.assertEqual(result, [batch()])
         self.assertEqual(provider.await_count, 1)
@@ -95,8 +95,14 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
             provider.assert_not_awaited()
 
     async def test_bad_single_block_output_is_not_repaired_into_facts(self):
-        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(batch([fact(value='99')]).model_dump()))) as provider:
+        with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(batch([fact(value='99')]).model_dump(exclude={'covered'})))) as provider:
             with self.assertRaises(DocumentError) as error:
                 await extract_ledger(None, [block()])
         self.assertEqual(error.exception.code, 'ledger_unverified')
         self.assertEqual(provider.await_count, 1)
+
+    def test_planned_retry_includes_actual_repair_instruction_headroom(self):
+        blocks = [block(str(i), 'Source text. ' * 200) for i in range(12)]
+        for group in plan_batches(blocks):
+            self.assertLessEqual(request_cost(group, retry=True), 7500)
+            self.assertGreater(request_cost(group, retry=True), request_cost(group))

@@ -14,6 +14,9 @@ from ..utils.documents import DocumentError
 from .local_review import verify_local_review
 
 logger = logging.getLogger(__name__)
+SCHEMA_REPAIR_PROMPT = ("The provider rejected the preceding output for JSON schema validation. Return the complete supplied "
+    "schema, including every required property and nested property. Use null only where nullable, and "
+    "empty arrays for absent warnings/conflicts. Do not add prose or change source facts.")
 
 
 def estimate_tokens(value):
@@ -114,7 +117,7 @@ def request_format(purpose, schema, model=None):
     return response_format, schema_id, strict
 
 
-async def complete(client, purpose, messages, schema, output_tokens):
+async def complete(client, purpose, messages, schema, output_tokens, *, on_rejected=None):
     verify_processing_review(client)
     model = model_for(purpose)
     response_format, schema_id, strict = request_format(purpose, schema, model)
@@ -156,6 +159,8 @@ async def complete(client, purpose, messages, schema, output_tokens):
             detail = body.get("error", body)
             failed = detail.get("failed_generation") if isinstance(detail, dict) else None
             if isinstance(failed, str):
+                if on_rejected is not None:
+                    await on_rejected(failed, 'provider_schema')
                 try:
                     generated = json.loads(failed)
                     valid_json = True
@@ -179,10 +184,7 @@ async def complete(client, purpose, messages, schema, output_tokens):
                                    purpose, missing, ",".join(errors) or "none")
             if (not attempt and exc.status_code == 400 and isinstance(detail, dict)
                     and detail.get("code") == "json_validate_failed"):
-                messages.append({"role": "user", "content":
-                    "The provider rejected the preceding output for JSON schema validation. Return the complete supplied "
-                    "schema, including every required property and nested property. Use null only where nullable, and "
-                    "empty arrays for absent warnings/conflicts. Do not add prose or change source facts."})
+                messages.append({"role": "user", "content": SCHEMA_REPAIR_PROMPT})
                 logger.warning("stage=model_schema_retry purpose=%s model=%s", purpose, model)
                 continue
             raise
