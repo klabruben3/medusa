@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import importlib.util
 import json
 import threading
 import unittest
@@ -35,6 +36,15 @@ def parts():
             for purpose, fields in FIELDS.items()}
 
 
+def provider_payload(part, purpose):
+    value = part.model_dump()
+    if purpose == "grading":
+        value["assessments"] = [{k: v for k, v in item.items() if k not in {"weight", "score", "completed"}}
+                                for item in value["assessments"]]
+    return value
+
+
+@unittest.skipUnless(importlib.util.find_spec("chromadb"), "Optional legacy retrieval dependency is not installed; default extraction does not use Chroma")
 class RetrievalTests(unittest.TestCase):
     def setUp(self):
         self.client = chroma_client()
@@ -175,6 +185,7 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
         self.review_fixture.start()
         self.addCleanup(self.review_fixture.stop)
 
+    @unittest.skipUnless(importlib.util.find_spec("chromadb"), "Optional legacy Chroma retrieval dependency is not installed")
     async def test_cancellation_waits_for_collection_cleanup(self):
         client = chroma_client()
         before = client.count_collections()
@@ -194,14 +205,15 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_semantic_grading_repair_uses_source_and_validates_again(self):
         values = parts()
-        bad = values["grading"].model_dump()
+        bad = provider_payload(values["grading"], "grading")
         bad["finalMarkFormula"] = {"participationWeight": 100, "examWeight": 0}
-        payloads = [values["identity"].model_dump(), bad, values["calendar"].model_dump(), values["grading"].model_dump()]
+        payloads = [values["identity"].model_dump(), bad, values["calendar"].model_dump(), provider_payload(values["grading"], "grading")]
         client = AsyncMock()
         client.chat.completions.create.side_effect = [SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(value)))]) for value in payloads]
         manager = AsyncMock()
         manager.__aenter__.return_value = client
-        contexts = {purpose: [{"content": "original evidence"}] for purpose in FIELDS}
+        contexts = {purpose: [{"id": "fixture", "source_file": "synthetic.pdf", "page": 1,
+                               "content": "ABC123 original evidence"}] for purpose in FIELDS}
         with patch.dict("os.environ", {"GROQ_API_KEY": "test"}), patch("app.ai.generate_module.AsyncGroq", return_value=manager), patch("app.ai.generate_module.collect_evidence", new=AsyncMock(return_value=(contexts, []))), patch("app.ai.provider.limiter.reserve", new=AsyncMock()):
             result = await create_module(source())
         self.assertFalse(result.module.hasExam)
@@ -212,12 +224,13 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_three_focused_calls_use_preserved_default_and_overrides(self):
         values = parts()
-        responses = [SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=values[p].model_dump_json()))]) for p in FIELDS]
+        responses = [SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(provider_payload(values[p], p))))]) for p in FIELDS]
         client = AsyncMock()
         client.chat.completions.create.side_effect = responses
         manager = AsyncMock()
         manager.__aenter__.return_value = client
-        contexts = {purpose: [{"content": purpose + " evidence"}] for purpose in FIELDS}
+        contexts = {purpose: [{"id": "fixture", "source_file": "synthetic.pdf", "page": 1,
+                               "content": "ABC123 " + purpose + " evidence"}] for purpose in FIELDS}
         with patch.dict("os.environ", {"GROQ_API_KEY": "test", "GROQ_CALENDAR_MODEL": "configured-calendar"}), patch("app.ai.generate_module.AsyncGroq", return_value=manager), patch("app.ai.generate_module.collect_evidence", new=AsyncMock(return_value=(contexts, []))), patch("app.ai.provider.limiter.reserve", new=AsyncMock()):
             result = await create_module(source())
         calls = client.chat.completions.create.call_args_list
@@ -236,29 +249,29 @@ class SecurityTests(unittest.TestCase):
         pdf.drawString(40, 760, "ABC123 Example. Class Test 1 has 40 marks and a weight of 100%.")
         pdf.drawString(40, 740, "No exam. Pass mark 50%. Semester: 2026-07-01 to 2026-11-01.")
         pdf.save()
-        chroma = chroma_client()
-        before = chroma.count_collections()
         values = parts()
         provider = AsyncMock()
         async def answer(**kwargs):
-            schema_name = kwargs["response_format"]["json_schema"]["name"]
-            if schema_name == "EvidenceExtraction":
+            properties = kwargs["response_format"]["json_schema"]["schema"]["properties"]
+            if "decisions" in properties:
                 blocks = json.loads(kwargs["messages"][1]["content"])
                 value = {"decisions": [{"blockId": b["id"], "purposes": list(FIELDS)} for b in blocks]}
                 content = json.dumps(value)
             else:
-                content = values[schema_name.removesuffix("Extraction").lower()].model_dump_json()
+                purpose = "identity" if "code" in properties else "grading" if "assessments" in properties else "calendar"
+                content = json.dumps(provider_payload(values[purpose], purpose))
             return SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=content))])
         provider.chat.completions.create.side_effect = answer
         manager = AsyncMock()
         manager.__aenter__.return_value = provider
-        with patch("app.main.authorize", new=AsyncMock(return_value="owner")), patch.dict("os.environ", {"GROQ_API_KEY": "test"}), patch("app.utils.retrieval.embedder", side_effect=AssertionError("Default path must not use embeddings")), patch("app.ai.provider.limiter.reserve", new=AsyncMock()), patch("app.ai.generate_module.AsyncGroq", return_value=manager), TestClient(app) as client:
+        review = {f"AI_GROQ_{name}_VERIFIED": "true" for name in ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")}
+        review.update(GROQ_API_KEY="test", AI_GROQ_REVIEW_REFERENCE="synthetic-unit-fixture-only")
+        with patch("app.main.authorize", new=AsyncMock(return_value="owner")), patch.dict("os.environ", review), patch("app.utils.retrieval.embedder", side_effect=AssertionError("Default path must not use embeddings")), patch("app.ai.provider.limiter.reserve", new=AsyncMock()), patch("app.ai.generate_module.AsyncGroq", return_value=manager), TestClient(app) as client:
             response = client.post("/process-documents", files={"files": ("plan.pdf", data.getvalue(), "application/pdf")})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["module"]["id"], "")
         self.assertEqual(response.json()["module"]["assessments"][0]["maxScore"], 40)
         self.assertEqual(provider.chat.completions.create.call_count, 3)
-        self.assertEqual(chroma.count_collections(), before)
 
     def test_unauthenticated_upload_rejected_before_parsing(self):
         with TestClient(app) as client:
