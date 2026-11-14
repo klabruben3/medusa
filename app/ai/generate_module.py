@@ -17,6 +17,7 @@ from .provider import complete
 from .partials import PARTIALS, GRADING_PARTIALS
 from .source_rules import link_source_rules
 from .source_calendar import ground_semester_end, ground_exam_dates
+from .source_ranges import source_range_errors
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -162,6 +163,7 @@ async def run_identity(client, blocks):
 
 def merge_parts(parts, warnings=(), source_contexts=None, calendar_contexts=None):
     data, notes = {}, list(warnings)
+    source_errors = []
     for purpose in PARTIALS:
         part = PARTIALS[purpose].model_validate(parts[purpose])
         if part.conflicts:
@@ -170,6 +172,7 @@ def merge_parts(parts, warnings=(), source_contexts=None, calendar_contexts=None
             part = link_individual_weights(part)
             if source_contexts is not None:
                 part = link_source_rules(part, source_contexts)
+                source_errors.extend(source_range_errors(part, source_contexts))
         if purpose == "calendar" and calendar_contexts is not None:
             part = ground_semester_end(part, calendar_contexts)
             part = ground_exam_dates(part, calendar_contexts, data["code"])
@@ -188,7 +191,7 @@ def merge_parts(parts, warnings=(), source_contexts=None, calendar_contexts=None
         raise DocumentError("Could not identify one academic module. Supply its study guide.", 422, "no_module")
     for assessment in module.assessments:
         assessment.score = assessment.completed = None
-    errors = validate_module(module)
+    errors = source_errors + validate_module(module)
     if errors:
         failure = DocumentError("The documents could not produce consistent grading rules. Supply missing assessment or grading details.", 422, "invalid_grading")
         failure.validation_errors = errors

@@ -19,7 +19,8 @@ Terms consulted: [Groq data handling](https://console.groq.com/docs/your-data) a
 Real provider calls exposed transport failures, incomplete strict-schema output,
 false conflict reports, and omitted grading facts. Requests now use a strict
 schema on the supported GPT-OSS models, bounded schema/transport recovery, and
-low reasoning effort within the existing completion allowance. Each attempt is
+low reasoning effort for literal/evidence workers while grading retains the model's
+default medium effort, all within the existing completion allowance. Each attempt is
 admitted against the configured model budget. No quota or billing limit changed.
 Oversized grading requests split owned fields while retaining original evidence;
 assessment handoff metadata excludes weights so placeholders cannot become source
@@ -66,13 +67,19 @@ weighted assessments outside the participation plan. Semantic validation now
 rejects those orphan weights without rewriting them. Another run returned a typo
 in the module code; source verification now checks the literal code before grading
 and permits one evidence-based re-extraction, then fails closed if still unverified.
+Run `20261114T154742965548Z` then passed 25/26 checks: it collapsed the explicit
+semester-test range to its first day. A source-range check now feeds that mismatch
+into the same bounded semantic repair, without guessing years or silently replacing
+dates. Multiple differently stated ranges require course/group reconciliation and
+are not automatically called contradictory facts. The complete grading/date result
+is still under real-test verification at this checkpoint.
 No academic module
 was saved and no authenticated hosted import, OCR acceptance or browser recovery
 is claimed. Across the wider 19-document corpus, 14 normalized locally, three need
 unavailable local OCR, one disallows encrypted extraction, and one exceeds the
 existing page limit. Those limits were not bypassed.
 
-All 76 focused regression tests passed, covering source identity, unlinked weights, calendar source anchors, review scope/expiry/key/origin,
+All 80 focused regression tests passed, covering explicit date ranges, source identity, unlinked weights, calendar source anchors, review scope/expiry/key/origin,
 bounded retries, evidence coverage/continuations, source links, grading budgets,
 validation, durable jobs and account isolation. See the companion Academiq change
 for `dataNote` persistence and review UI; existing Studio otherwise discarded those

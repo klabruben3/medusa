@@ -12,6 +12,7 @@ def safe_validation_issues(errors):
         ("no matching assessment", "formula_links", "A formula component does not match an assessment or category."),
         ("multiple formula components", "duplicate_weighting", "An assessment is counted in more than one formula component."),
         ("not included in the participation formula", "unlinked_weight", "A positive participation weight is not linked to the participation formula; keep the separate final-mark split out of assessment weights."),
+        ("explicit source semester-test range", "assessment_range", "An assessment date range does not preserve its explicit source range."),
         ("Final mark weights", "final_weights", "Final-mark weights must match the exam structure and total 100%."),
         ("maxScore", "maximum_marks", "An assessment or exam has a missing or invalid maximum mark."),
         ("nonnegative", "missing_number", "A required numeric grading value is missing or invalid."),

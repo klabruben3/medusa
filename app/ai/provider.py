@@ -114,8 +114,9 @@ async def complete(client, purpose, messages, schema, output_tokens):
         try:
             verify_processing_review(client)
             # GPT-OSS reasoning consumes the same bounded completion allowance.
-            # Keep room for the required JSON; custom models retain their defaults.
-            options = {"reasoning_effort": "low"} if strict else {}
+            # Literal workers keep room for JSON; grading retains the model's
+            # default effort for its more complex rules. Custom models are unchanged.
+            options = {"reasoning_effort": "medium" if purpose == "grading" else "low"} if strict else {}
             response = await client.chat.completions.create(model=model, messages=messages,
                 response_format=response_format, temperature=0, max_completion_tokens=output_tokens, **options)
             usage = getattr(response, "usage", None)

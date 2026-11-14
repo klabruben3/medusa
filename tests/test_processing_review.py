@@ -9,6 +9,16 @@ from app.utils.documents import DocumentError
 
 
 class ProcessingReviewTests(unittest.IsolatedAsyncioTestCase):
+    async def test_complex_grading_keeps_default_effort_and_custom_models_get_no_unsupported_option(self):
+        settings = {**{f"AI_GROQ_{key}_VERIFIED": "true" for key in
+                      ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")},
+                    "AI_GROQ_REVIEW_REFERENCE": "synthetic-review"}
+        for model, expected in (("openai/gpt-oss-120b", "medium"), ("custom-model", None)):
+            client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock(return_value="ok"))))
+            with patch.dict(os.environ, {**settings,"GROQ_GRADING_MODEL":model}, clear=True), patch("app.ai.provider.limiter.reserve", new=AsyncMock()):
+                await complete(client,"grading",[],{},1)
+            self.assertEqual(client.chat.completions.create.await_args.kwargs.get("reasoning_effort"),expected)
+
     async def test_schema_rejection_retries_once_without_replaying_private_failed_generation(self):
         settings = {**{f"AI_GROQ_{key}_VERIFIED": "true" for key in
                       ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")},
