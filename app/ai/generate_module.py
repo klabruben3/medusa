@@ -33,6 +33,7 @@ missing required numbers: -1; missing optional fields: null/omit. Warn about eac
 hasExam requires explicit evidence; unknown: false plus warning. Practical exams alone do not imply hasExam.
 No student scores/completion.
 moduleId: lowercase alphanumeric code. Assessment IDs: stable module-prefixed names. Keep categories
+Use moduleIdentity.moduleId as the exact prefix for generated assessment and formula IDs when supplied.
 consistent. Formula componentId must equal an assessment ID or <moduleId>-<category> with exact category.
 For individual participation weights, link the exact percentages to assessment IDs in formula components,
 even without a 'participation formula' heading. Pooled category weights belong in formula components;
@@ -270,7 +271,8 @@ async def generate_from_contexts(client, contexts, notes, *, on_worker=None):
     parts["identity"] = await run_identity(client, contexts["identity"])
     if on_worker is not None:
         await on_worker("identity", parts["identity"])
-    identity = {"code": parts["identity"].code, "name": parts["identity"].name}
+    identity = {"code": parts["identity"].code, "name": parts["identity"].name,
+                "moduleId": "".join(c for c in parts["identity"].code.lower() if c.isascii() and c.isalnum())}
     parts["grading"] = await run_grading(client, contexts["grading"], identity)
     if on_worker is not None:
         await on_worker("grading", parts["grading"])
