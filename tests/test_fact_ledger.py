@@ -21,7 +21,7 @@ def batch(observations=None, covered=None):
 
 
 def indexed_batch(value):
-    data = value.model_dump(exclude={'covered'})
+    data = value.model_dump(include={'observations'})
     for observation in data['observations']:
         observation['evidence'] = [{'block': cite['block'], 'row': None} for cite in observation['evidence']]
     return data
@@ -104,9 +104,9 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_bad_single_block_output_is_not_repaired_into_facts(self):
         with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=response(indexed_batch(batch([fact(value=99)]))))) as provider:
-            with self.assertRaises(DocumentError) as error:
-                await extract_ledger(None, [block()])
-        self.assertEqual(error.exception.code, 'ledger_unverified')
+            result = await extract_ledger(None, [block()])
+        self.assertEqual(result[0].observations, [])
+        self.assertEqual(result[0].rejected_claims[0].reason, 'source_value')
         self.assertEqual(provider.await_count, 1)
 
     def test_planned_retry_includes_actual_repair_instruction_headroom(self):
@@ -152,8 +152,8 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
         result.usage = SimpleNamespace(prompt_tokens=100, completion_tokens=50)
         usage = AsyncMock()
         with patch('app.ai.fact_ledger.complete', new=AsyncMock(return_value=result)):
-            with self.assertRaises(DocumentError):
-                await extract_ledger(None, [block()], on_response=usage)
+            reviewed = await extract_ledger(None, [block()], on_response=usage)
+        self.assertEqual(len(reviewed[0].rejected_claims), 1)
         usage.assert_awaited_once_with({'inputTokens': 100, 'outputTokens': 50})
 
     def test_compact_schema_prompt_still_declares_domain_enums(self):
@@ -164,3 +164,26 @@ class LedgerTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(value, PROMPT)
         with self.assertRaises(ValueError):
             parse_value('assessment', 'type', 'test')
+
+    def test_singleton_identity_is_server_owned_without_changing_source_values(self):
+        value = {'observations': [{'kind': 'module', 'key': 'ABC123',
+            'values': [{'field': 'code', 'value': 'ABC123'}], 'evidence': [{'block': 'a', 'row': None}]}]}
+        sources = [block(content='ABC123 Example.')]
+        result = validate_batch(materialize(ObservationBatch.model_validate(value), sources), sources)
+        self.assertEqual(result.observations[0].key, 'module')
+        self.assertEqual(result.observations[0].values[0].value, 'ABC123')
+        self.assertEqual(value['observations'][0]['key'], 'ABC123')
+
+    def test_assessment_title_alias_preserves_text_and_never_overwrites_another_name(self):
+        data = indexed_batch(batch())
+        data['observations'][0]['values'] = [{'field': 'label', 'value': 'Weekly test1'}]
+        sources = [block(content='Weekly test1: 40 marks.')]
+        result = materialize(ObservationBatch.model_validate(data), sources)
+        self.assertEqual(result.observations[0].values[0].field, 'name')
+        self.assertEqual(result.observations[0].values[0].value, 'Weekly test1')
+        data['observations'][0]['values'].append({'field': 'name', 'value': 'Different title'})
+        with self.assertRaises(ValueError):
+            validate_batch(materialize(ObservationBatch.model_validate(data), sources), sources)
+        data['observations'][0]['values'] = [{'field': 'label', 'value': 'Group A'}]
+        with self.assertRaises(ValueError):
+            validate_batch(materialize(ObservationBatch.model_validate(data), sources), sources)

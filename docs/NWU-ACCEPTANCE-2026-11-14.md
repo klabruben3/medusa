@@ -103,3 +103,28 @@ Additional zero-provider checks passed on 14 normalized originals, with 619 adja
 table pairs preserved and the two observed APPM122/MTHS111 routing gaps covered
 using calendar-only table classification. Four runner-manifest tests passed for
 course/path/type/count boundaries, explicit excerpts and duplicate filenames.
+
+## Bounded engine follow-up (not promoted)
+
+The new opt-in ledger has no hosted route. It extracts source-indexed typed facts,
+assembles using the existing Module contract and preserves competing claims for
+review. Request/retry budgets, owner-scoped checkpoints and daily-quota handling
+are implemented. See `BOUNDED-EXTRACTION.md` for the phased implementation gates.
+
+Six live attempts did not produce an accepted complete MTHS111 template. Some
+failed at provider/schema boundaries; one 120B HTTP-200 batch reported 3,162 input
+and 1,728 output tokens. Its initial structural replay is superseded for acceptance:
+manual source review found wrong dates/times and unsupported boundaries, and raw
+JSON inspection found eight duplicate keys. It must not be reused as a valid v2
+checkpoint. Both tested models later reported daily-token exhaustion.
+
+Version 2 rejects duplicate keys, quarantines unsupported claims without repeating
+valid extraction, blocks acceptance while quarantine remains, and derives merged
+timetable context in code. Ten offline checks against the actual timetable pass,
+including all eight Group 1 dates/tutorial windows and Group 2 Test 4 ambiguity.
+These are deterministic parser checks, not whole-template accuracy. Unknown maxima
+and source contradictions still require explicit review. No academic data was saved.
+
+Fresh full-source model acceptance, reviewer correction UI, authenticated durable
+integration, save/reopen/process restart, actual hosted OCR and deployment remain.
+There is no basis yet to call the new engine generally reliable or cost-effective.

@@ -6,6 +6,7 @@ from .fact_ledger import reduce_ledger, validate_batch
 from .generate_module import merge_parts, project_grading
 from .partials import GRADING_EXTRACTION
 from ..utils.documents import DocumentError
+from .table_context import schedule_candidates
 
 
 def assemble_ledger(ledger, blocks):
@@ -18,6 +19,13 @@ def assemble_ledger(ledger, blocks):
     facts = reduce_ledger(ledger)
     records = defaultdict(dict)
     citations, issues, notes = {}, [], []
+    rejected = [claim.model_dump() for batch in ledger for claim in batch.rejected_claims]
+    if rejected:
+        notes.append('Unsupported model claims were excluded from the proposal. Review the source evidence; missing required values still prevent acceptance.')
+        issues.extend({'code': 'quarantined_claim', 'reason': claim['reason'],
+                       'kind': claim['observation']['kind'], 'key': claim['observation']['key'],
+                       'fields': [v['field'] for v in claim['observation']['values']]}
+                      for claim in rejected)
     for fact in facts:
         identity = (fact['kind'], fact['key'], fact['field'])
         if len(fact['candidates']) != 1:
@@ -106,4 +114,5 @@ def assemble_ledger(ledger, blocks):
     return {'status': 'draft_requires_source_review' if result else 'needs_review',
             'result': result.model_dump(exclude_none=True) if result else None,
             'proposal': proposal, 'issues': issues, 'facts': facts,
+            'rejectedClaims': rejected, 'sourceSchedules': schedule_candidates(blocks),
             'academicDatabaseWritten': False}
