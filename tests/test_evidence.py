@@ -36,6 +36,17 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         contexts = {"identity": [], "calendar": [], "grading": [block]}
         self.assertEqual(preserve_continuations(contexts, [block])["grading"], [block])
 
+    def test_assessment_table_header_preserves_bare_numbered_rows(self):
+        from app.ai.evidence import preserve_continuations
+        rows = [['Group A'], ['Toets/Test', 'Datum/Date', 'Leereenhede/Study units'],
+                ['1', '17/02', '1.1–1.4'], ['2', '24/02', '1.1–1.9'],
+                ['3', '10/03', '2.1–2.6'], ['4', '17/03', '2.6–3.2']]
+        block = {'id': 'table', 'type': 'table', 'source_file': 'plan.pdf', 'page': 1,
+                 'content': json.dumps({'rows': rows}, ensure_ascii=False)}
+        result = preserve_continuations({'identity': [], 'grading': [], 'calendar': [block]}, [block])
+        self.assertEqual(json.loads(result['grading'][0]['content'])['rows'], rows)
+        self.assertEqual(result['grading'][0]['sourceRowIndices'], list(range(len(rows))))
+
     def test_general_exam_period_alone_is_not_a_specific_assessment(self):
         from app.ai.evidence import preserve_continuations
         block = {"id": "table", "type": "table", "source_file": "plan.pdf", "page": 1,

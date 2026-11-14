@@ -183,10 +183,13 @@ def preserve_continuations(contexts, all_sections):
             continue
         matches = [i for i, row in enumerate(rows)
                    if assessment_row.search(" ".join(str(cell) for cell in row))]
-        if not matches:
+        headers = " ".join(str(cell) for row in rows[:2] for cell in row)
+        dedicated = (re.search(r"\b(?:assessment|assessering|test|toets)\b", headers, re.I)
+                     and re.search(r"\b(?:date|datum|marks|punte|weight|gewig|study units|leereenhede)\b", headers, re.I))
+        if not matches and not dedicated:
             continue
         # Some plans have a group title followed by the column header. Keep both.
-        indices = sorted({*range(min(2, len(rows))),
+        indices = list(range(len(rows))) if dedicated else sorted({*range(min(2, len(rows))),
                           *(j for i in matches for j in range(max(0, i - 1), min(len(rows), i + 2)))})
         contexts["grading"].append({**block, "id": derived_id,
             "content": json.dumps({"rows": [rows[i] for i in indices]}, ensure_ascii=False),

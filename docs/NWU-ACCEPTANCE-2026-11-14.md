@@ -1,100 +1,105 @@
 # Controlled NWU extraction acceptance
 
-The owner authorized a local test review for three APPM122 course documents from
-the supplied NWU corpus. The private record binds the exact original file hashes,
-the existing API credential by digest, the official Groq API origin and a 24-hour
-expiry. It covers institutional assessment material and professional contacts,
-with no individual student records. No API key, source text or generated draft is
-stored in this repository. The CLI-only context cannot be enabled by an HTTP
-request or by copying its reference into hosted review settings.
+This remains a draft change, not a claim that Medusa is generally reliable or ready
+for unrestricted student document processing.
 
-The review acknowledges standard retention/US processing; it does not attest to
-Zero Data Retention or independently verify organization/project settings. It
-does not approve the hosted service's broader audience or change its review flags.
-Terms consulted: [Groq data handling](https://console.groq.com/docs/your-data) and
+## Review boundary
+
+The owner authorized controlled testing of the supplied institutional NWU course
+material. Separate private, expiring records bind the selected APPM122 and MTHS111
+files by hash, the existing credential by digest and the official Groq API origin.
+They exclude individual student records. The trusted CLI context cannot be enabled
+by an HTTP request or by copying its reference into hosted settings. Credentials,
+original sources, full worker output and generated drafts remain outside Git.
+
+The review acknowledges standard retention and US processing, without claiming
+Zero Data Retention or independent verification of organization/project controls.
+It does not approve the hosted service's broader audience or set general review
+flags. References: [Groq data handling](https://console.groq.com/docs/your-data),
 [Groq trust FAQ](https://trust.groq.com/faq?s=9pcm46fyh5sypzqgtfto).
 
-## Findings and resulting changes
+## Implemented safeguards
 
-Real provider calls exposed transport failures, incomplete strict-schema output,
-false conflict reports, and omitted grading facts. Requests now use a strict
-schema on the supported GPT-OSS models, bounded schema/transport recovery, and
-low reasoning effort for literal/evidence workers while grading retains the model's
-default medium effort, all within the existing completion allowance. Each attempt is
-admitted against the configured model budget. No quota or billing limit changed.
-Oversized grading requests split owned fields while retaining original evidence;
-assessment handoff metadata excludes weights so placeholders cannot become source
-facts. Candidate contradictions receive one verification pass; genuine unresolved
-contradictions still block the draft.
+- Strict supported GPT-OSS schemas, distinct schema identifiers, explicit field
+  ownership, bounded schema/transport recovery and per-attempt budget admission.
+  Literal workers use low reasoning effort; grading retains medium. No billing or
+  quota was increased.
+- Grading splits owned fields when necessary while retaining source evidence.
+  Participation formulas own weights; assessment definitions do not independently
+  invent weights or progress. Orphan weights and unsupported module codes fail.
+- Short source continuations and explicit assessment rows in teaching-plan tables
+  reach grading even if the classifier labels them only as calendar evidence.
+  Original cells, neighboring rows, source page/block and row indices are retained.
+- Narrow source links preserve explicit final splits, conditional supplement prose
+  and unambiguous fully year-qualified date ranges. Populated disagreement is not
+  overwritten. Conditional prose never becomes invented arithmetic.
+- Semester-end and module-exam dates require matching, verbatim source anchors;
+  general examination-period starts are not specific module exam slots.
+- Exact negative-one placeholders become unset only for known optional nonnegative
+  requirements, with review notes. Required marks, weights and thresholds still fail
+  validation when unknown. This avoids a full grading repair discarding valid rules
+  merely because an optional field was unknown.
+- Differing literal numbered class-test study-unit descriptions are preserved in
+  review notes and the optional coverage field remains unset. The narrow recognizer
+  is not a general contradiction detector; different granularity may be compatible.
+  Genuine unresolved worker conflicts still block rather than selecting a winner.
 
-Short source continuations remain attached to selected grading clauses. A narrow
-source linker retains explicit equal final-mark weights and quoted conditional
-supplement clauses. It never assumes a 50/50 default, silently overwrites a
-conflicting formula, or converts conditional prose into executable arithmetic.
-Optional local callbacks allow private evidence/worker diagnostics; hosted callers
-do not persist raw worker output through these callbacks.
+## Real evidence
 
-## Evidence and limits
+Two actual worker runs, `20261114T163051010287Z` and
+`20261114T171208128461Z`, reparsed the same original APPM122 PDFs and used two
+independently classified evidence caches. Each passed 26 checked grading/date facts
+and Studio's runtime draft parser. These are evidence-cache replays, not two fresh
+end-to-end classifications. One earlier fresh full classification took about 19
+minutes and its then-current output failed expanded acceptance. Earlier schema,
+identity and semantic failures remain failures.
 
-Run `20261114T151650340243Z` reparsed the three original PDFs and reused previously
-classified evidence. The real identity/grading/calendar workers and semantic repair
-produced an unsaved draft passing all 21 manually established source-fact checks.
-Studio's actual runtime parser accepted it with no personal scores/completion.
-Checks include both class tests, the September semester-test range, maximum marks,
-participation contributions, admission/exam/pass thresholds, explicit 50/50 final
-split, exam maximum and conditional supplement notes. The initial assembly had
-unknown weights on extra exam records; bounded semantic re-extraction resolved it.
-Earlier failed runs remain failures; they are not counted as successful imports.
+Manual review subsequently found differing Class Test 2 coverage in the information
+sheet and semester plan. The grading evidence had omitted the relevant plan row.
+This exposed a gap beyond those 26 checks. Reassembling archived real worker output
+with reconciled original evidence and the new deterministic scope review passed
+27/27 checks. That reassembly used zero new provider calls and is diagnostic proof,
+not a successful generation with the latest code.
 
-Manual review subsequently found an untested calendar defect: that draft used
-the general exam-period start as semester end. It is not a fully accepted draft.
-Acceptance now has 26 checks, including unknown semester/module-exam dates,
-the explicit recess range and exam duration. Calendar extraction requires a verbatim block anchor with an explicit
-semester-end label and matching date; missing/invalid support leaves the date
-blank with a review warning. Exam starts, last tests, invented quotes, wrong block
-IDs, mismatched dates/years and negated/relative end statements are rejected.
-Specific exam dates additionally require a module-scoped exam slot; general
-university examination periods cannot become a scheduled module exam.
+The real run including the table fallback, `20261114T173853337849Z`, failed with
+HTTP 429 before completion. It is not accepted. Latest-code real generation remains
+a gate. A separate MTHS111 real test uses its original planning/general-information
+PDFs and an explicit two-page study-guide excerpt (original PDF pages 15–16).
+The 173-page original guide remains rejected by the existing 100-page limit; this
+is not full-guide support. MTHS111 maxima missing from the selected evidence must
+not be invented merely to make a template pass.
 
-This is one successful grading/assessment worker run, not general or repeated-run reliability.
-Fresh full run `20261114T152202517126Z` completed in about 19 minutes, including
-bounded provider schema recovery, batch splitting and grading repair. It passed
-24/25 checks and Studio's parser. Its remaining defect was the general exam-period
-start becoming a module exam date. That process started before the calendar-anchor
-fix; a current-worker run against its newly classified evidence is pending.
-Expanded review also found final-mark components represented as extra positively
-weighted assessments outside the participation plan. Semantic validation now
-rejects those orphan weights without rewriting them. Another run returned a typo
-in the module code; source verification now checks the literal code before grading
-and permits one evidence-based re-extraction, then fails closed if still unverified.
-Run `20261114T154742965548Z` then passed 25/26 checks: it collapsed the explicit
-semester-test range to its first day. A source-range check now feeds that mismatch
-into the same bounded semantic repair, without guessing years or silently replacing
-dates. Multiple differently stated ranges require course/group reconciliation and
-are not automatically called contradictory facts. The complete grading/date result
-is still under real-test verification at this checkpoint. Run
-`20261114T160112961333Z` failed semantic validation after its bounded repair;
-no draft was accepted. Its diagnostics exposed competing representations of
-participation and final-mark percentages. Internal assessment definitions now
-exclude independent weights and personal progress. The participation formula owns
-weights; the server projects the unchanged public assessment-weight fields from
-direct formula links, leaving pooled/excluded contributions at zero. The formula
-is never normalized or silently replaced. This keeps the public Module/database
-contract while removing duplicated model ownership. Identity/calendar completions
-have 1,800 tokens, still admitted within the unchanged 8,000-token account budget.
-Missing dates may be linked only to one explicit, fully year-qualified source range,
-with provenance retained in notes; a populated disagreement is never overwritten.
-Each worker schema also has a distinct stable identifier and an explicit owned-field
-list. Local-only rejected-generation diagnostics remain private and are not hosted
-raw-output logging or proof of provider acceptance.
-No academic module
-was saved and no authenticated hosted import, OCR acceptance or browser recovery
-is claimed. Across the wider 19-document corpus, 14 normalized locally, three need
-unavailable local OCR, one disallows encrypted extraction, and one exceeds the
-existing page limit. Those limits were not bypassed.
+## Regression and remaining gates
 
-All 86 focused regression tests passed, covering schema identifiers, weight ownership/projection, explicit date ranges, source identity, unlinked weights, calendar source anchors, review scope/expiry/key/origin,
-bounded retries, evidence coverage/continuations, source links, grading budgets,
-validation, durable jobs and account isolation. See the companion Academiq change
-for `dataNote` persistence and review UI; existing Studio otherwise discarded those
-notes on save/reload. Deployment and owner source review remain distinct gates.
+The full local suite ran 127 tests: 123 passed, four optional legacy Chroma retrieval
+tests skipped because that dependency is not installed. The default extraction path
+does not use Chroma. Current pipeline fixtures exercise actual field ownership,
+source-code verification and schema dispatch rather than obsolete schema names.
+
+No academic module was saved. No authenticated hosted import, actual hosted OCR,
+process-restart/browser recovery or device flow is claimed. The wider 19-document
+normalization corpus had 14 successes, three local OCR blockers, one document that
+disallows encrypted extraction and one over the page limit. Limits were preserved.
+
+Academiq PR 21 adds nullable source-note persistence and the existing editor field;
+its database migration and rollback isolation checks passed, but its frontend is
+unmerged and undeployed. Medusa PR 5 remains draft and undeployed. Hosted audience
+review, current-code real extraction acceptance, representative missing/grouped
+assessment handling and authenticated recovery remain distinct acceptance gates.
+
+### MTHS111 observed result
+
+Run `20261114T174311114895Z` finished real evidence classification in about 12
+minutes, then failed closed with `request_budget_exceeded` before an identity or
+grading completion. Selected context text was 11,631 identity / 22,121 grading /
+10,272 calendar characters. No draft was generated. Supporting this representative
+three-file case needs bounded context extraction/assembly work; raising a quota or
+silently cropping academic evidence is not an accepted fix. The missing MIC/ALEKS
+maxima are a separate manually identified source gap, not an observed invented
+model result. This run began at `e6bef9c`, before the final scope-review/header
+follow-ups, and does not verify those later changes through actual model calls.
+
+Additional zero-provider checks passed on 14 normalized originals, with 619 adjacent
+table pairs preserved and the two observed APPM122/MTHS111 routing gaps covered
+using calendar-only table classification. Four runner-manifest tests passed for
+course/path/type/count boundaries, explicit excerpts and duplicate filenames.
