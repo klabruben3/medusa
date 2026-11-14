@@ -163,6 +163,35 @@ async def extract_batch(client, blocks, depth=0):
 def preserve_continuations(contexts, all_sections):
     """Keep a short source continuation after a selected grading fragment."""
     contexts = {purpose: list(items) for purpose, items in contexts.items()}
+    # Calendar classification must not hide assessment coverage, marks or dates
+    # embedded in a teaching plan. Copy original cells and nearby date rows;
+    # never reconstruct facts from a classifier's summary.
+    exact_ids = {item["id"] for item in contexts["grading"]}
+    assessment_row = re.compile(
+        r"\b(?:(?:class|semester|weekly)\s*test\s*\d*|klastoets\s*\d*|"
+        r"semestertoets\s*\d*|test\s*\d+|toets\s*\d+|ALEKS\s*\d*|MIC|WIK|"
+        r"(?:exam\s*)?paper\s*\d+|vraestel\s*\d+)\b", re.I)
+    for block in all_sections:
+        derived_id = block["id"] + "-assessment-rows"
+        if block.get("type") != "table" or block["id"] in exact_ids or derived_id in exact_ids:
+            continue
+        try:
+            rows = json.loads(block["content"])["rows"]
+        except (ValueError, KeyError, TypeError):
+            continue
+        if not isinstance(rows, list) or not all(isinstance(row, list) for row in rows):
+            continue
+        matches = [i for i, row in enumerate(rows)
+                   if assessment_row.search(" ".join(str(cell) for cell in row))]
+        if not matches:
+            continue
+        # Some plans have a group title followed by the column header. Keep both.
+        indices = sorted({*range(min(2, len(rows))),
+                          *(j for i in matches for j in range(max(0, i - 1), min(len(rows), i + 2)))})
+        contexts["grading"].append({**block, "id": derived_id,
+            "content": json.dumps({"rows": [rows[i] for i in indices]}, ensure_ascii=False),
+            "sourceBlockId": block["id"], "sourceRowIndices": indices})
+        exact_ids.add(derived_id)
     positions = {block["id"]: index for index, block in enumerate(all_sections)}
     selected = {item["id"].rstrip("ab") for item in contexts["grading"]}
     present = {(item["source_file"], item["page"], item["id"]) for item in contexts["grading"]}
@@ -182,7 +211,7 @@ def preserve_continuations(contexts, all_sections):
                 and 0 < len(content) <= 240 and (continuation or once)):
             contexts["grading"].append(following)
             present.add(key)
-    contexts["grading"].sort(key=lambda item: (positions.get(item["id"].rstrip("ab"), len(positions)), item["id"]))
+    contexts["grading"].sort(key=lambda item: (positions.get(item.get("sourceBlockId", item["id"].rstrip("ab")), len(positions)), item["id"]))
     return contexts
 
 

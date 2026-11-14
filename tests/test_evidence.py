@@ -12,6 +12,36 @@ def response(value, finish="stop"):
 
 
 class EvidenceTests(unittest.IsolatedAsyncioTestCase):
+    def test_calendar_only_table_retains_assessment_scope_and_adjacent_dates(self):
+        from app.ai.evidence import preserve_continuations
+        rows = [["Group A"], ["Date", "Topic"], ["11-Oct", "Vectors"],
+                ["12-Oct", "Class test 2 (4.2.2–5.2)"], ["13-Oct", "Continuation"],
+                ["28-Oct", "Examination starts"]]
+        block = {"id": "s1-b2-part0", "type": "table", "source_file": "plan.pdf", "page": 2,
+                 "content": json.dumps({"rows": rows}, ensure_ascii=False)}
+        contexts = {"identity": [], "calendar": [block], "grading": []}
+        result = preserve_continuations(contexts, [block])
+        selected = result["grading"][0]
+        self.assertEqual(selected["sourceRowIndices"], [0, 1, 2, 3, 4])
+        self.assertEqual(json.loads(selected["content"])["rows"], rows[:5])
+        self.assertEqual((selected["sourceBlockId"], selected["source_file"], selected["page"]),
+                         (block["id"], "plan.pdf", 2))
+        self.assertEqual(contexts["grading"], [])
+        self.assertEqual(preserve_continuations(result, [block]), result)
+
+    def test_complete_grading_table_is_not_added_twice(self):
+        from app.ai.evidence import preserve_continuations
+        block = {"id": "table", "type": "table", "source_file": "plan.pdf", "page": 1,
+                 "content": json.dumps({"rows": [["Date", "Assessment"], ["3-Mar", "ALEKS 1"]]})}
+        contexts = {"identity": [], "calendar": [], "grading": [block]}
+        self.assertEqual(preserve_continuations(contexts, [block])["grading"], [block])
+
+    def test_general_exam_period_alone_is_not_a_specific_assessment(self):
+        from app.ai.evidence import preserve_continuations
+        block = {"id": "table", "type": "table", "source_file": "plan.pdf", "page": 1,
+                 "content": json.dumps({"rows": [["Date", "Topic"], ["28-Oct", "Examination starts"]]})}
+        self.assertEqual(preserve_continuations({"identity": [], "calendar": [block], "grading": []}, [block])["grading"], [])
+
     def test_grading_sentence_continuation_keeps_source_order_without_crossing_pages(self):
         from app.ai.evidence import preserve_continuations
         def block(identifier, text, page=1):
