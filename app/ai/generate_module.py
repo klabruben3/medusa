@@ -18,6 +18,7 @@ from .partials import PARTIALS, GRADING_PARTIALS, GRADING_EXTRACTION
 from .source_rules import link_source_rules
 from .source_calendar import ground_semester_end, ground_exam_dates
 from .source_ranges import source_range_errors, link_source_ranges
+from .optional_unknowns import optional_unknowns, unknown_notes
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -190,6 +191,11 @@ def merge_parts(parts, warnings=(), source_contexts=None, calendar_contexts=None
         if part.conflicts:
             raise DocumentError("The documents contain conflicting module information.", 422, "conflicting_sources")
         if purpose == "grading":
+            part, unknown = optional_unknowns(part)
+            if unknown:
+                optional_notes = unknown_notes(unknown)
+                part = part.model_copy(update={"warnings": list(dict.fromkeys([*part.warnings, *optional_notes])),
+                    "dataNote": "\n\n".join(filter(None, [part.dataNote, *optional_notes]))})
             part = link_individual_weights(part)
             if source_contexts is not None:
                 part = link_source_rules(part, source_contexts)
