@@ -43,6 +43,8 @@ Afrikaans deelnamepunt/DP and PM mean participation mark; eksamentoelating means
 Use the explicitly stated participation admission percentage even when the final exam split is missing.
 Never assume a 50/50 final split or confuse participation weights with final exam weights.
 Dates: YYYY-MM-DD; times: HH:mm. Preserve ranges/sign-up slots; never guess years. Exam papers need stable IDs.
+uploadYear is metadata, not evidence for a course date. Use the source title/year and preserve table-row
+continuations when linking dates to tests. Repeated overlap rows are context, not additional assessments.
 Warn with filename/page about missing facts and real conflicts. Never silently choose between conflicts.
 """
 
