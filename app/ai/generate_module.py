@@ -19,6 +19,7 @@ from .source_rules import link_source_rules
 from .source_calendar import ground_semester_end, ground_exam_dates
 from .source_ranges import source_range_errors, link_source_ranges
 from .optional_unknowns import optional_unknowns, unknown_notes
+from .source_scopes import review_source_scopes
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -200,6 +201,7 @@ def merge_parts(parts, warnings=(), source_contexts=None, calendar_contexts=None
             if source_contexts is not None:
                 part = link_source_rules(part, source_contexts)
                 part = link_source_ranges(part, source_contexts)
+                part = review_source_scopes(part, source_contexts)
                 source_errors.extend(source_range_errors(part, source_contexts))
         if purpose == "calendar" and calendar_contexts is not None:
             part = ground_semester_end(part, calendar_contexts)
