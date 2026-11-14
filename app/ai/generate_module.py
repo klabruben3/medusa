@@ -15,6 +15,7 @@ from .evidence import collect_evidence
 from .provider import complete
 from .partials import PARTIALS, GRADING_PARTIALS
 from .source_rules import link_source_rules
+from .source_calendar import ground_semester_end
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -44,6 +45,9 @@ Afrikaans deelnamepunt/DP and PM mean participation mark; eksamentoelating means
 Use the explicitly stated participation admission percentage even when the final exam split is missing.
 Never assume a 50/50 final split or confuse participation weights with final exam weights.
 Dates: YYYY-MM-DD; times: HH:mm. Preserve ranges/sign-up slots; never guess years. Exam papers need stable IDs.
+For calendar, semesterEnd requires semesterEndSource with an exact supplied blockId and short verbatim quote
+explicitly stating when the semester ends. Do not substitute an exam-period start, last assessment or teaching-week
+range. If no explicit semester-end statement exists, use an empty semesterEnd and null semesterEndSource, and warn.
 uploadYear is metadata, not evidence for a course date. Use the source title/year and preserve table-row
 continuations when linking dates to tests. Repeated overlap rows are context, not additional assessments.
 Warn with filename/page about missing facts and real conflicts. Never silently choose between conflicts.
@@ -136,7 +140,7 @@ async def run_grading(client, blocks, identity, feedback=None):
         "warnings": list(dict.fromkeys(assessments.warnings + rules.warnings)), "conflicts": []})
 
 
-def merge_parts(parts, warnings=(), source_contexts=None):
+def merge_parts(parts, warnings=(), source_contexts=None, calendar_contexts=None):
     data, notes = {}, list(warnings)
     for purpose in PARTIALS:
         part = PARTIALS[purpose].model_validate(parts[purpose])
@@ -146,8 +150,10 @@ def merge_parts(parts, warnings=(), source_contexts=None):
             part = link_individual_weights(part)
             if source_contexts is not None:
                 part = link_source_rules(part, source_contexts)
+        if purpose == "calendar" and calendar_contexts is not None:
+            part = ground_semester_end(part, calendar_contexts)
         notes.extend(part.warnings)
-        values = part.model_dump(exclude_none=True, exclude={"warnings", "conflicts"})
+        values = part.model_dump(exclude_none=True, exclude={"warnings", "conflicts", "semesterEndSource"})
         if data.keys() & values.keys():
             raise DocumentError("Extraction workers returned overlapping fields.", 502, "invalid_output")
         data.update(values)
@@ -248,11 +254,11 @@ async def generate_from_contexts(client, contexts, notes, *, on_worker=None):
     if on_worker is not None:
         await on_worker("calendar", parts["calendar"])
     try:
-        return merge_parts(parts, notes, contexts["grading"])
+        return merge_parts(parts, notes, contexts["grading"], contexts["calendar"])
     except DocumentError as exc:
         if exc.code != "invalid_grading":
             raise
         parts["grading"] = await run_grading(client, contexts["grading"], identity, feedback=exc.validation_errors)
         if on_worker is not None:
             await on_worker("grading-repaired", parts["grading"])
-        return merge_parts(parts, notes, contexts["grading"])
+        return merge_parts(parts, notes, contexts["grading"], contexts["calendar"])

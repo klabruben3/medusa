@@ -9,6 +9,10 @@ FIELDS = {
     "calendar": ("semesterStart", "semesterEnd", "examDate", "examDateEnd", "examOpportunities", "recessPeriods"),
 }
 
+class CalendarSource(BaseModel):
+    blockId: str
+    quote: str
+
 
 def partial_model(purpose, names=None):
     fields = {name: (Module.model_fields[name].annotation, deepcopy(Module.model_fields[name]))
@@ -16,6 +20,8 @@ def partial_model(purpose, names=None):
     fields["warnings"] = (list[str], Field(default_factory=list))
     # Conflicting numeric/identity facts cannot safely be represented as one answer.
     fields["conflicts"] = (list[str], Field(default_factory=list))
+    if purpose == "calendar":
+        fields["semesterEndSource"] = (CalendarSource | None, None)
     # A null diagnostic list means no diagnostics, not missing academic facts.
     normalize_notes = field_validator('warnings', 'conflicts', mode='before')(
         lambda value: [] if value is None else value)

@@ -45,14 +45,22 @@ split, exam maximum and conditional supplement notes. The initial assembly had
 unknown weights on extra exam records; bounded semantic re-extraction resolved it.
 Earlier failed runs remain failures; they are not counted as successful imports.
 
-This is one successful worker run, not general or repeated-run reliability.
+Manual review subsequently found an untested calendar defect: that draft used
+the general exam-period start as semester end. It is not a fully accepted draft.
+Acceptance now includes a 22nd check requiring the unstated semester end to remain
+blank. Calendar extraction now requires a verbatim block anchor with an explicit
+semester-end label and matching date; missing/invalid support leaves the date
+blank with a review warning. Exam starts, last tests, invented quotes, wrong block
+IDs, mismatched dates/years and negated/relative end statements are rejected.
+
+This is one successful grading/assessment worker run, not general or repeated-run reliability.
 A fresh full classification run is pending at this checkpoint. No academic module
 was saved and no authenticated hosted import, OCR acceptance or browser recovery
 is claimed. Across the wider 19-document corpus, 14 normalized locally, three need
 unavailable local OCR, one disallows encrypted extraction, and one exceeds the
 existing page limit. Those limits were not bypassed.
 
-All 66 focused regression tests passed, covering review scope/expiry/key/origin,
+All 69 focused regression tests passed, covering calendar source anchors, review scope/expiry/key/origin,
 bounded retries, evidence coverage/continuations, source links, grading budgets,
 validation, durable jobs and account isolation. See the companion Academiq change
 for `dataNote` persistence and review UI; existing Studio otherwise discarded those
