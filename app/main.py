@@ -98,7 +98,8 @@ async def process_documents(files: list[UploadFile], job_id=None):
 async def root():
     return {"status": "ok", "service": "academiq-api", "extractionVersion": 2,
             "documentJournalVersion": 1, "durableJobsEnabled": job_journal.enabled(),
-            "documentParserVersion": 1, "ocrBinaryAvailable": shutil.which('tesseract') is not None}
+            "documentParserVersion": 1, "ocrBinaryAvailable": shutil.which('tesseract') is not None,
+            "providerReviewVersion": 2}
 
 
 async def uploaded_documents(request, job_id, accept=None):

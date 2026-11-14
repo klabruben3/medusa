@@ -60,9 +60,16 @@ limiter = ModelLimiter()
 
 def verify_processing_review():
     """Fail closed until the actual provider account and minor safeguards have been reviewed."""
+    reference = os.getenv("AI_GROQ_REVIEW_REFERENCE", "").strip()
+    # Iris enforces owner audience/deployment restrictions separately. Medusa's
+    # registered-user authorization cannot inherit those scoped attestations.
+    if (os.getenv("AI_REVIEW_SCOPE") is not None
+            or reference.lower().startswith(("owner-preview:", "owner-production:"))):
+        raise DocumentError("Document AI processing is awaiting an applicable review. No provider request was sent.",
+                            503, "provider_review_required")
     checks = ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")
     if (not all(os.getenv(f"AI_GROQ_{check}_VERIFIED") == "true" for check in checks)
-            or not os.getenv("AI_GROQ_REVIEW_REFERENCE", "").strip()):
+            or not reference):
         raise DocumentError("Document AI processing is awaiting a privacy review. No provider request was sent.",
                             503, "provider_review_required")
 
