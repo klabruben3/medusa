@@ -2,6 +2,7 @@
 import asyncio
 from copy import deepcopy
 import json
+import hashlib
 import logging
 import math
 import os
@@ -104,13 +105,17 @@ async def complete(client, purpose, messages, schema, output_tokens):
     verify_processing_review(client)
     model = model_for(purpose)
     strict = model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
+    request_schema = strict_schema(schema) if strict else schema
+    schema_id = hashlib.sha256(json.dumps(request_schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:12]
+    label = "".join(c for c in schema.get("title", purpose.title() + "Extraction")
+                    if c.isascii() and (c.isalnum() or c in "_-"))[:40] or "Extraction"
     response_format = {"type": "json_schema", "json_schema": {
-        "name": purpose.title() + "Extraction", "schema": strict_schema(schema) if strict else schema, "strict": strict}}
+        "name": label + "_" + schema_id, "schema": request_schema, "strict": strict}}
     messages = list(messages)
     for attempt in range(2):
         tokens = estimate_tokens({"messages": messages, "response_format": response_format}) + output_tokens
         await limiter.reserve(model, tokens)
-        logger.info("stage=model_request purpose=%s model=%s estimated_tokens=%d output_limit=%d", purpose, model, tokens, output_tokens)
+        logger.info("stage=model_request purpose=%s model=%s schema_id=%s estimated_tokens=%d output_limit=%d", purpose, model, schema_id, tokens, output_tokens)
         try:
             verify_processing_review(client)
             # GPT-OSS reasoning consumes the same bounded completion allowance.

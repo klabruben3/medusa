@@ -9,6 +9,22 @@ from app.utils.documents import DocumentError
 
 
 class ProcessingReviewTests(unittest.IsolatedAsyncioTestCase):
+    async def test_schema_identifiers_are_stable_and_distinct_for_different_worker_shapes(self):
+        settings = {**{f"AI_GROQ_{key}_VERIFIED": "true" for key in
+                      ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")},
+                    "AI_GROQ_REVIEW_REFERENCE": "synthetic-review"}
+        schemas = [{"title":"Grade", "type":"object", "properties":{"assessments":{"type":"array","items":{"type":"string"}}}},
+                   {"type":"object", "title":"Grade", "properties":{"participationFormula":{"type":"string"}}}]
+        names=[]
+        for schema in (schemas[0],schemas[1],dict(reversed(list(schemas[0].items())))):
+            client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock(return_value="ok"))))
+            with patch.dict(os.environ, settings, clear=True), patch("app.ai.provider.limiter.reserve", new=AsyncMock()):
+                await complete(client,"grading",[],schema,1)
+            names.append(client.chat.completions.create.await_args.kwargs["response_format"]["json_schema"]["name"])
+        self.assertNotEqual(names[0],names[1])
+        self.assertEqual(names[0],names[2])
+        self.assertTrue(all(len(name)<=64 for name in names))
+
     async def test_complex_grading_keeps_default_effort_and_custom_models_get_no_unsupported_option(self):
         settings = {**{f"AI_GROQ_{key}_VERIFIED": "true" for key in
                       ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")},

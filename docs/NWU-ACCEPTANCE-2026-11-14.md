@@ -82,13 +82,18 @@ direct formula links, leaving pooled/excluded contributions at zero. The formula
 is never normalized or silently replaced. This keeps the public Module/database
 contract while removing duplicated model ownership. Identity/calendar completions
 have 1,800 tokens, still admitted within the unchanged 8,000-token account budget.
+Missing dates may be linked only to one explicit, fully year-qualified source range,
+with provenance retained in notes; a populated disagreement is never overwritten.
+Each worker schema also has a distinct stable identifier and an explicit owned-field
+list. Local-only rejected-generation diagnostics remain private and are not hosted
+raw-output logging or proof of provider acceptance.
 No academic module
 was saved and no authenticated hosted import, OCR acceptance or browser recovery
 is claimed. Across the wider 19-document corpus, 14 normalized locally, three need
 unavailable local OCR, one disallows encrypted extraction, and one exceeds the
 existing page limit. Those limits were not bypassed.
 
-All 84 focused regression tests passed, covering weight ownership/projection, explicit date ranges, source identity, unlinked weights, calendar source anchors, review scope/expiry/key/origin,
+All 86 focused regression tests passed, covering schema identifiers, weight ownership/projection, explicit date ranges, source identity, unlinked weights, calendar source anchors, review scope/expiry/key/origin,
 bounded retries, evidence coverage/continuations, source links, grading budgets,
 validation, durable jobs and account isolation. See the companion Academiq change
 for `dataNote` persistence and review UI; existing Studio otherwise discarded those

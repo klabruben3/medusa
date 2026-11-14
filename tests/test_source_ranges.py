@@ -1,9 +1,22 @@
 import unittest
-from app.ai.source_ranges import source_range_errors
+from app.ai.source_ranges import source_range_errors, link_source_ranges
 from app.utils.documents import DocumentError
 from test_grading_links import grading
 
 class SourceRangeTests(unittest.TestCase):
+    def test_missing_range_end_is_linked_with_provenance_but_disagreement_is_preserved(self):
+        blocks=[{"content":"Semester test (2–5 March 2027, 50 marks)","source_file":"guide.pdf","page":2}]
+        original=self.part(end=None)
+        result=link_source_ranges(original,blocks)
+        self.assertEqual(result.assessments[0].dateEnd,"2027-03-05")
+        self.assertIsNone(original.assessments[0].dateEnd)
+        self.assertIn("guide.pdf",result.dataNote)
+        self.assertEqual(source_range_errors(result,blocks),[])
+        self.assertEqual(link_source_ranges(result,blocks).model_dump(),result.model_dump())
+        wrong=self.part(end="2027-03-06")
+        self.assertIs(link_source_ranges(wrong,blocks),wrong)
+        self.assertTrue(source_range_errors(wrong,blocks))
+
     def part(self,start="2027-03-02",end="2027-03-05"):
         part=grading((100,))
         part.assessments[0].type="semester-test"
