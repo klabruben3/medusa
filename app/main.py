@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import shutil
 from time import monotonic
 from uuid import uuid4
 
@@ -14,7 +15,8 @@ from starlette.formparsers import MultiPartException, MultiPartParser
 from .ai.generate_module import create_module
 from .types.schema import ExtractionResult
 from .utils.auth import authorize
-from .utils.documents import DocumentError, extract_source, MAX_FILE_BYTES, MAX_TOTAL_BYTES, MAX_FILES, MAX_TEXT
+from .utils.documents import DocumentError, MAX_FILE_BYTES, MAX_TOTAL_BYTES, MAX_FILES, MAX_TEXT
+from .utils.document_process import extract_source_isolated as extract_source
 from .utils.retrieval import blocking_job
 from .utils import job_journal
 
@@ -95,7 +97,8 @@ async def process_documents(files: list[UploadFile], job_id=None):
 @app.get("/")
 async def root():
     return {"status": "ok", "service": "academiq-api", "extractionVersion": 2,
-            "documentJournalVersion": 1, "durableJobsEnabled": job_journal.enabled()}
+            "documentJournalVersion": 1, "durableJobsEnabled": job_journal.enabled(),
+            "documentParserVersion": 1, "ocrBinaryAvailable": shutil.which('tesseract') is not None}
 
 
 async def uploaded_documents(request, job_id, accept=None):
