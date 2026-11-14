@@ -101,9 +101,9 @@ def verify_processing_review(client=None):
         raise DocumentError("Document AI processing is awaiting a privacy review. No provider request was sent.",
                             503, "provider_review_required")
 
-async def complete(client, purpose, messages, schema, output_tokens):
-    verify_processing_review(client)
-    model = model_for(purpose)
+def request_format(purpose, schema, model=None):
+    """One format builder for admission planning and the actual provider request."""
+    model = model or model_for(purpose)
     strict = model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
     request_schema = strict_schema(schema) if strict else schema
     schema_id = hashlib.sha256(json.dumps(request_schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:12]
@@ -111,6 +111,13 @@ async def complete(client, purpose, messages, schema, output_tokens):
                     if c.isascii() and (c.isalnum() or c in "_-"))[:40] or "Extraction"
     response_format = {"type": "json_schema", "json_schema": {
         "name": label + "_" + schema_id, "schema": request_schema, "strict": strict}}
+    return response_format, schema_id, strict
+
+
+async def complete(client, purpose, messages, schema, output_tokens):
+    verify_processing_review(client)
+    model = model_for(purpose)
+    response_format, schema_id, strict = request_format(purpose, schema, model)
     messages = list(messages)
     for attempt in range(2):
         tokens = estimate_tokens({"messages": messages, "response_format": response_format}) + output_tokens
