@@ -16,6 +16,17 @@ def grading(weights=(30, 30, 40)):
 
 
 class GradingLinkTests(unittest.TestCase):
+    def test_positive_weights_outside_participation_plan_are_rejected_without_rewriting(self):
+        module = sample()
+        extra = module.assessments[0].model_copy(update={"id":"PRIVATE-EXTRA", "name":"Final split placeholder", "type":"exam", "category":None, "weight":50})
+        module.assessments.append(extra)
+        errors = validate_module(module)
+        self.assertTrue(any("not included in the participation formula" in item for item in errors))
+        self.assertEqual(extra.weight,50)
+        issues = safe_validation_issues(errors)
+        self.assertIn("unlinked_weight", [item["code"] for item in issues])
+        self.assertNotIn("PRIVATE-EXTRA", str(issues))
+
     def test_complete_plan_is_linked_without_changing_source_weights(self):
         part = link_individual_weights(grading())
         self.assertEqual([c.weight for c in part.participationFormula.components], [30, 30, 40])

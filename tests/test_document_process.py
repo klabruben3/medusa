@@ -47,7 +47,7 @@ class DocumentProcessTests(unittest.TestCase):
     def test_crashed_native_child_is_a_retryable_failure_and_does_not_kill_the_parent(self):
         before = {child.pid for child in multiprocessing.active_children()}
         with self.assertRaises(DocumentError) as result:
-            _run_parser('plan.pdf', b'private-fixture', worker=crash, timeout=10)
+            _run_parser('plan.pdf', b'private-fixture', worker=crash, timeout=30)
         self.assertEqual(result.exception.code, 'document_parser_unavailable')
         self.assertEqual(result.exception.status, 503)
         self.assertNotIn('private-fixture', str(result.exception))
@@ -62,7 +62,9 @@ class DocumentProcessTests(unittest.TestCase):
 
     def test_malformed_child_result_never_becomes_a_completed_document(self):
         with self.assertRaises(DocumentError) as result:
-            _run_parser('plan.pdf', b'fixture', worker=malformed, timeout=10)
+            # Windows spawn/import can exceed ten seconds under load. This tests
+            # the malformed-reply protocol, not the separate short timeout case.
+            _run_parser('plan.pdf', b'fixture', worker=malformed, timeout=30)
         self.assertEqual(result.exception.code, 'document_parser_unavailable')
 
     def test_private_ocr_scratch_is_removed_after_a_failed_child(self):

@@ -12,6 +12,69 @@ def response(value, finish="stop"):
 
 
 class EvidenceTests(unittest.IsolatedAsyncioTestCase):
+    def test_calendar_only_table_retains_assessment_scope_and_adjacent_dates(self):
+        from app.ai.evidence import preserve_continuations
+        rows = [["Group A"], ["Date", "Topic"], ["11-Oct", "Vectors"],
+                ["12-Oct", "Class test 2 (4.2.2–5.2)"], ["13-Oct", "Continuation"],
+                ["28-Oct", "Examination starts"]]
+        block = {"id": "s1-b2-part0", "type": "table", "source_file": "plan.pdf", "page": 2,
+                 "content": json.dumps({"rows": rows}, ensure_ascii=False)}
+        contexts = {"identity": [], "calendar": [block], "grading": []}
+        result = preserve_continuations(contexts, [block])
+        selected = result["grading"][0]
+        self.assertEqual(selected["sourceRowIndices"], [0, 1, 2, 3, 4])
+        self.assertEqual(json.loads(selected["content"])["rows"], rows[:5])
+        self.assertEqual((selected["sourceBlockId"], selected["source_file"], selected["page"]),
+                         (block["id"], "plan.pdf", 2))
+        self.assertEqual(contexts["grading"], [])
+        self.assertEqual(preserve_continuations(result, [block]), result)
+
+    def test_complete_grading_table_is_not_added_twice(self):
+        from app.ai.evidence import preserve_continuations
+        block = {"id": "table", "type": "table", "source_file": "plan.pdf", "page": 1,
+                 "content": json.dumps({"rows": [["Date", "Assessment"], ["3-Mar", "ALEKS 1"]]})}
+        contexts = {"identity": [], "calendar": [], "grading": [block]}
+        self.assertEqual(preserve_continuations(contexts, [block])["grading"], [block])
+
+    def test_assessment_table_header_preserves_bare_numbered_rows(self):
+        from app.ai.evidence import preserve_continuations
+        rows = [['Group A'], ['Toets/Test', 'Datum/Date', 'Leereenhede/Study units'],
+                ['1', '17/02', '1.1–1.4'], ['2', '24/02', '1.1–1.9'],
+                ['3', '10/03', '2.1–2.6'], ['4', '17/03', '2.6–3.2']]
+        block = {'id': 'table', 'type': 'table', 'source_file': 'plan.pdf', 'page': 1,
+                 'content': json.dumps({'rows': rows}, ensure_ascii=False)}
+        result = preserve_continuations({'identity': [], 'grading': [], 'calendar': [block]}, [block])
+        self.assertEqual(json.loads(result['grading'][0]['content'])['rows'], rows)
+        self.assertEqual(result['grading'][0]['sourceRowIndices'], list(range(len(rows))))
+
+    def test_general_exam_period_alone_is_not_a_specific_assessment(self):
+        from app.ai.evidence import preserve_continuations
+        block = {"id": "table", "type": "table", "source_file": "plan.pdf", "page": 1,
+                 "content": json.dumps({"rows": [["Date", "Topic"], ["28-Oct", "Examination starts"]]})}
+        self.assertEqual(preserve_continuations({"identity": [], "calendar": [block], "grading": []}, [block])["grading"], [])
+
+    def test_grading_sentence_continuation_keeps_source_order_without_crossing_pages(self):
+        from app.ai.evidence import preserve_continuations
+        def block(identifier, text, page=1):
+            return {"id": identifier, "content": text, "type": "paragraph", "source_file": "guide.pdf", "page": page}
+        start = block("s0-b0-part0", "Each of the following marks will be 50%")
+        continuation = block("s0-b1-part0", "of the final mark:")
+        end = block("s0-b2-part0", "Participation mark and examination mark.")
+        contexts = {"identity": [], "calendar": [], "grading": [end, start]}
+        result = preserve_continuations(contexts, [start, continuation, end])
+        self.assertEqual([b["id"] for b in result["grading"]], [start["id"], continuation["id"], end["id"]])
+        other_page = {**continuation, "page": 2}
+        self.assertNotIn(other_page, preserve_continuations(contexts, [start, other_page, end])["grading"])
+        self.assertEqual(contexts["grading"], [end, start])
+    async def test_review_and_budget_failures_are_not_masked_as_schema_retries(self):
+        block = {"id": "a", "content": "Synthetic evidence", "source_file": "fixture", "page": 1}
+        for code in ("provider_review_required", "request_budget_exceeded"):
+            with self.subTest(code=code), patch("app.ai.evidence.complete", side_effect=DocumentError("Unavailable", 503, code)) as request:
+                with self.assertRaises(DocumentError) as caught:
+                    await extract_batch(None, [block])
+                self.assertEqual(caught.exception.code, code)
+                self.assertEqual(request.call_count, 1)
+
     def test_section_boundaries_cover_all_source_characters(self):
         text = "\n".join(f"Assessment {i}: 40 marks. Toets. 文本" for i in range(200))
         result = sections([{"filename": "plan.txt", "text": text}])

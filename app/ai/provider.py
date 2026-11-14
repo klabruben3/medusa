@@ -1,16 +1,26 @@
 """Bounded Groq requests and per-model admission; never log prompts or responses."""
 import asyncio
+from copy import deepcopy
 import json
+import hashlib
 import logging
 import math
 import os
 import time
 from collections import defaultdict, deque
 
-from groq import APIStatusError, RateLimitError
+from groq import APIStatusError, RateLimitError, APIConnectionError
 from ..utils.documents import DocumentError
+from .local_review import verify_local_review
 
 logger = logging.getLogger(__name__)
+SCHEMA_REPAIR_PROMPT = ("The preceding JSON data failed validation. Return ONE JSON DATA OBJECT conforming to the response schema, "
+    "including required nested values. NEVER return the schema definition or prose. Do not invent facts. "
+    "Use null only where nullable and empty arrays when no items exist. The exact top-level DATA fields are: ")
+
+
+def schema_repair_message(schema):
+    return SCHEMA_REPAIR_PROMPT + ', '.join(schema.get('properties', {})) + '.'
 
 
 def estimate_tokens(value):
@@ -29,6 +39,15 @@ def request_budget():
         return max(2000, int(os.getenv("GROQ_TPM_BUDGET", "8000")))
     except ValueError:
         raise DocumentError("GROQ_TPM_BUDGET must be an integer.", 503, "invalid_token_budget") from None
+
+
+def rate_limit_scope(error):
+    body = getattr(error, 'body', None)
+    detail = body.get('error', body) if isinstance(body, dict) else {}
+    message = str(detail.get('message', '')).lower() if isinstance(detail, dict) else ''
+    return next((scope for text, scope in [('tokens per day', 'tokens_per_day'),
+        ('requests per day', 'requests_per_day'), ('tokens per minute', 'tokens_per_minute'),
+        ('requests per minute', 'requests_per_minute')] if text in message), 'unspecified')
 
 
 class ModelLimiter:
@@ -57,14 +76,44 @@ class ModelLimiter:
 limiter = ModelLimiter()
 
 
+def strict_schema(schema):
+    """Groq strict mode requires every object property, including nullable ones."""
+    value = deepcopy(schema)
+    def walk(node):
+        if isinstance(node, dict):
+            node.pop("title", None)
+            node.pop("default", None)
+            if node.get("type") == "object":
+                node["required"] = list(node.get("properties", {}))
+                node["additionalProperties"] = False
+            for key, item in node.items():
+                if key in {"properties", "$defs"}:
+                    for child in item.values():
+                        walk(child)
+                else:
+                    walk(item)
+            # JSON number includes integers. Groq rejects an overlapping union
+            # of both unconstrained types; the equivalent number branch suffices.
+            choices = node.get('anyOf')
+            if isinstance(choices, list) and {'type': 'integer'} in choices and {'type': 'number'} in choices:
+                node['anyOf'] = [choice for choice in choices if choice != {'type': 'integer'}]
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+    walk(value)
+    return value
 
-def verify_processing_review():
+
+
+def verify_processing_review(client=None):
     """Fail closed until the actual provider account and minor safeguards have been reviewed."""
+    if verify_local_review(client):
+        return
     reference = os.getenv("AI_GROQ_REVIEW_REFERENCE", "").strip()
     # Iris enforces owner audience/deployment restrictions separately. Medusa's
     # registered-user authorization cannot inherit those scoped attestations.
     if (os.getenv("AI_REVIEW_SCOPE") is not None
-            or reference.lower().startswith(("owner-preview:", "owner-production:"))):
+            or reference.lower().startswith(("owner-preview:", "owner-production:", "local-nwu:"))):
         raise DocumentError("Document AI processing is awaiting an applicable review. No provider request was sent.",
                             503, "provider_review_required")
     checks = ("NO_TRAINING", "RETENTION", "INTERNATIONAL_TRANSFER", "MINOR_SAFEGUARDS")
@@ -73,28 +122,93 @@ def verify_processing_review():
         raise DocumentError("Document AI processing is awaiting a privacy review. No provider request was sent.",
                             503, "provider_review_required")
 
-async def complete(client, purpose, messages, schema, output_tokens):
-    verify_processing_review()
-    model = model_for(purpose)
+def request_format(purpose, schema, model=None):
+    """One format builder for admission planning and the actual provider request."""
+    model = model or model_for(purpose)
+    strict = model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
+    request_schema = strict_schema(schema) if strict else schema
+    schema_id = hashlib.sha256(json.dumps(request_schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:12]
+    label = "".join(c for c in schema.get("title", purpose.title() + "Extraction")
+                    if c.isascii() and (c.isalnum() or c in "_-"))[:40] or "Extraction"
     response_format = {"type": "json_schema", "json_schema": {
-        "name": purpose.title() + "Extraction", "schema": schema, "strict": False}}
-    tokens = estimate_tokens({"messages": messages, "response_format": response_format}) + output_tokens
+        "name": label + "_" + schema_id, "schema": request_schema, "strict": strict}}
+    return response_format, schema_id, strict
+
+
+async def complete(client, purpose, messages, schema, output_tokens, *, on_rejected=None):
+    verify_processing_review(client)
+    model = model_for(purpose)
+    response_format, schema_id, strict = request_format(purpose, schema, model)
+    messages = list(messages)
     for attempt in range(2):
+        tokens = estimate_tokens({"messages": messages, "response_format": response_format}) + output_tokens
         await limiter.reserve(model, tokens)
-        logger.info("stage=model_request purpose=%s model=%s estimated_tokens=%d output_limit=%d", purpose, model, tokens, output_tokens)
+        logger.info("stage=model_request purpose=%s model=%s schema_id=%s estimated_tokens=%d output_limit=%d", purpose, model, schema_id, tokens, output_tokens)
         try:
-            verify_processing_review()
-            return await client.chat.completions.create(model=model, messages=messages,
-                response_format=response_format, temperature=0, max_completion_tokens=output_tokens)
+            verify_processing_review(client)
+            # GPT-OSS reasoning consumes the same bounded completion allowance.
+            # Literal workers keep room for JSON; grading retains the model's
+            # default effort for its more complex rules. Custom models are unchanged.
+            options = {"reasoning_effort": "medium" if purpose == "grading" else "low"} if strict else {}
+            response = await client.chat.completions.create(model=model, messages=messages,
+                response_format=response_format, temperature=0, max_completion_tokens=output_tokens, **options)
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                logger.info("stage=model_response purpose=%s input_tokens=%s output_tokens=%s", purpose,
+                            getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None))
+            return response
         except RateLimitError as exc:
             if attempt:
                 raise
+            scope = rate_limit_scope(exc)
+            if scope in {'tokens_per_day', 'requests_per_day'}:
+                logger.warning('stage=model_quota_exhausted scope=%s', scope)
+                raise  # An immediate retry cannot restore a daily allowance.
             try:
-                delay = min(120, max(1, float(exc.response.headers.get("retry-after", "61"))))
+                delay = max(1, float(exc.response.headers.get("retry-after", "61")))
             except (TypeError, ValueError):
                 delay = 61
+            if delay > 120:
+                raise  # Do not retry earlier than the provider's requested delay.
             await asyncio.sleep(delay)
+        except APIConnectionError:
+            if attempt:
+                raise
+            logger.warning("stage=model_transport_retry purpose=%s model=%s", purpose, model)
+            await asyncio.sleep(2)
         except APIStatusError as exc:
             # Metadata only. Raw provider errors may include generated source text.
             logger.warning("stage=model_rejected purpose=%s model=%s upstream_status=%s", purpose, model, exc.status_code)
+            body = exc.body if isinstance(exc.body, dict) else {}
+            detail = body.get("error", body)
+            failed = detail.get("failed_generation") if isinstance(detail, dict) else None
+            if isinstance(failed, str):
+                if on_rejected is not None:
+                    await on_rejected(failed, 'provider_schema')
+                try:
+                    generated = json.loads(failed)
+                    valid_json = True
+                except ValueError:
+                    generated, valid_json = None, False
+                logger.warning("stage=model_rejection_metadata purpose=%s failed_characters=%d valid_json=%s root_type=%s",
+                               purpose, len(failed), valid_json, type(generated).__name__)
+                if isinstance(generated, dict):
+                    missing = len(set(response_format["json_schema"]["schema"].get("required", [])) - set(generated))
+                    from .partials import PARTIALS, GRADING_PARTIALS
+                    from pydantic import ValidationError
+                    kind = next((item for item in [*PARTIALS.values(), *GRADING_PARTIALS.values()]
+                                 if set(item.model_fields) == set(schema.get("properties", {}))), None)
+                    errors = []
+                    if kind is not None:
+                        try:
+                            kind.model_validate(generated)
+                        except ValidationError as error:
+                            errors = sorted({item["type"] for item in error.errors()})
+                    logger.warning("stage=model_rejection_shape purpose=%s missing_root_fields=%d validation_types=%s",
+                                   purpose, missing, ",".join(errors) or "none")
+            if (not attempt and exc.status_code == 400 and isinstance(detail, dict)
+                    and detail.get("code") == "json_validate_failed"):
+                messages.append({"role": "user", "content": schema_repair_message(schema)})
+                logger.warning("stage=model_schema_retry purpose=%s model=%s", purpose, model)
+                continue
             raise

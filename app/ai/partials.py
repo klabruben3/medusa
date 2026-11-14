@@ -1,7 +1,7 @@
 """Worker fields are selected from Module, never maintained as duplicate schemas."""
 from copy import deepcopy
 from pydantic import create_model, Field, field_validator
-from ..types.schema import BaseModel, Module
+from ..types.schema import BaseModel, Module, AssessmentComponent
 
 FIELDS = {
     "identity": ("code", "name", "lecturer", "email", "office", "consultationHours", "groups"),
@@ -9,13 +9,20 @@ FIELDS = {
     "calendar": ("semesterStart", "semesterEnd", "examDate", "examDateEnd", "examOpportunities", "recessPeriods"),
 }
 
+class CalendarSource(BaseModel):
+    blockId: str
+    quote: str
 
-def partial_model(purpose):
+
+def partial_model(purpose, names=None):
     fields = {name: (Module.model_fields[name].annotation, deepcopy(Module.model_fields[name]))
-              for name in FIELDS[purpose]}
+              for name in (FIELDS[purpose] if names is None else names)}
     fields["warnings"] = (list[str], Field(default_factory=list))
     # Conflicting numeric/identity facts cannot safely be represented as one answer.
     fields["conflicts"] = (list[str], Field(default_factory=list))
+    if purpose == "calendar":
+        fields["semesterEndSource"] = (CalendarSource | None, None)
+        fields["examDateSource"] = (CalendarSource | None, None)
     # A null diagnostic list means no diagnostics, not missing academic facts.
     normalize_notes = field_validator('warnings', 'conflicts', mode='before')(
         lambda value: [] if value is None else value)
@@ -24,6 +31,19 @@ def partial_model(purpose):
 
 
 PARTIALS = {purpose: partial_model(purpose) for purpose in FIELDS}
+ASSESSMENT_DEFINITION = create_model("AssessmentDefinition", __base__=BaseModel, **{
+    name: (field.annotation, deepcopy(field)) for name, field in AssessmentComponent.model_fields.items()
+    if name not in {"weight", "score", "completed"}})
+
+def definition_part(purpose, names=None):
+    return create_model(purpose.title() + "DefinitionPart", __base__=partial_model(purpose, names),
+                        assessments=(list[ASSESSMENT_DEFINITION], Field(default_factory=list)))
+
+GRADING_EXTRACTION = definition_part("grading")
+GRADING_PARTIALS = {
+    "assessments": definition_part("grading_assessments", ("assessments",)),
+    "rules": partial_model("grading_rules", tuple(name for name in FIELDS["grading"] if name != "assessments")),
+}
 
 QUERIES = {
     "identity": [

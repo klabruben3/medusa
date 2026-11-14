@@ -13,6 +13,7 @@ from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
 from .ai.generate_module import create_module
+from .ai.provider import rate_limit_scope
 from .types.schema import ExtractionResult
 from .utils.auth import authorize
 from .utils.documents import DocumentError, MAX_FILE_BYTES, MAX_TOTAL_BYTES, MAX_FILES, MAX_TEXT
@@ -35,6 +36,12 @@ def document_failure(exc):
     if getattr(exc, "issues", None):
         payload["issues"] = exc.issues
     return payload
+
+
+def provider_limit_message(error):
+    if rate_limit_scope(error) in {'tokens_per_day', 'requests_per_day'}:
+        return "The daily document-processing allowance is exhausted. Retry after the provider resets its allowance; an immediate retry will not help."
+    return "The extraction provider is temporarily rate limited. Try again later."
 
 
 def groq_failure(exc, job_id):
@@ -161,8 +168,8 @@ async def main(request: Request):
     except DocumentError as exc:
         logger.warning("stage=failed job=%s code=%s status=%d", job_id, exc.code, exc.status)
         return JSONResponse(document_failure(exc), status_code=exc.status)
-    except RateLimitError:
-        return JSONResponse({"detail": "The extraction provider is busy. Try again shortly.", "code": "rate_limited"}, status_code=429)
+    except RateLimitError as error:
+        return JSONResponse({"detail": provider_limit_message(error), "code": "rate_limited"}, status_code=429)
     except (APITimeoutError, TimeoutError):
         return JSONResponse({"detail": "Document processing timed out. Try fewer documents.", "code": "timeout"}, status_code=504)
     except APIError as exc:
@@ -203,8 +210,8 @@ async def execute_job(job, files, form):
         if issues:
             logger.warning("stage=validation_failed job=%s issues=%s", job["id"], [issue["code"] for issue in issues])
         job.update(status="failed", error={**document_failure(exc), "status": exc.status})
-    except RateLimitError:
-        job.update(status="failed", error={"detail": "Groq's account limit was reached. Retry later.", "code": "rate_limited", "status": 429})
+    except RateLimitError as error:
+        job.update(status="failed", error={"detail": provider_limit_message(error), "code": "rate_limited", "status": 429})
     except (APITimeoutError, TimeoutError):
         job.update(status="failed", error={"detail": "Extraction timed out. Try a smaller document set.", "code": "timeout", "status": 504})
     except APIError as exc:
