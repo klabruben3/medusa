@@ -2,6 +2,7 @@
 import logging
 import json
 import os
+import re
 from datetime import date
 
 from dotenv import load_dotenv
@@ -37,6 +38,8 @@ even without a 'participation formula' heading. Pooled category weights belong i
 individual assessment weight is then 0. Never normalize weights, invent assessments or assume maxScore 100.
 Exam assessment weight is its participation contribution: use 0 when excluded from the participation plan.
 The separate final exam weighting belongs only in finalMarkFormula; omit that formula if unstated.
+Participation mark and examination mark in a final-mark split are not two extra assessments. Never create
+an attendance assessment from a participation-mark heading without an actual stated attendance assessment.
 Conditional bonuses/supplements and near-threshold adjustments are not fixed weights. Preserve exact
 conditions in dataNote and warnings. Equivalent bilingual facts or absent optional facts are not conflicts.
 Keep minimumCompleted separate from dropLowest; participation admission, exam subminimum and final pass
@@ -124,6 +127,8 @@ async def run_grading(client, blocks, identity, feedback=None):
               "Participation assessment weights sum to 100% OF PARTICIPATION. Final participation/exam weights independently "
               "sum to 100% OF THE FINAL MARK. These two sums are compatible, not conflicting source rules. "
               "Conditional supplements and generic practice/homework lists are notes, not additional assessment records. "
+              "Participation mark and examination mark in a final split are not extra assessments. Do not invent an "
+              "attendance assessment from a participation-mark heading. "
               "Preserve unclear conditional wording in dataNote with a review warning; ambiguity alone is not a contradiction "
               "and must not become executable arithmetic. A source conflict requires opposing facts for the same quantity and conditions. "
               "An exam's assessment weight is its participation contribution (0 if excluded), not its separate final-mark weight. "
@@ -141,6 +146,18 @@ async def run_grading(client, blocks, identity, feedback=None):
         **assessments.model_dump(exclude={"warnings", "conflicts"}),
         **rules.model_dump(exclude={"warnings", "conflicts"}),
         "warnings": list(dict.fromkeys(assessments.warnings + rules.warnings)), "conflicts": []})
+
+
+async def run_identity(client, blocks):
+    for attempt in range(2):
+        feedback = (["The previous module code does not occur in the original supplied sources. Copy the current module code exactly from its title/assessment plan; do not invent a spelling or substitute a prerequisite."] if attempt else None)
+        part = await run_worker(client, "identity", blocks, feedback=feedback)
+        characters = [c for c in part.code if c.isalnum()]
+        if characters:
+            pattern = r"(?<![A-Za-z0-9])" + r"[\s_-]*".join(re.escape(c) for c in characters) + r"(?![A-Za-z0-9])"
+            if any(re.search(pattern, b["content"] + " " + b.get("source_file", ""), re.I) for b in blocks):
+                return part
+    raise DocumentError("The module code could not be verified against the source documents. Review the course title and retry.", 422, "unverified_module_identity")
 
 
 def merge_parts(parts, warnings=(), source_contexts=None, calendar_contexts=None):
@@ -247,7 +264,7 @@ async def create_module(sources, ingestion_id=None, *, on_evidence=None, on_work
 async def generate_from_contexts(client, contexts, notes, *, on_worker=None):
     """Same workers for fresh extraction or explicitly local diagnostic replay."""
     parts = {}
-    parts["identity"] = await run_worker(client, "identity", contexts["identity"])
+    parts["identity"] = await run_identity(client, contexts["identity"])
     if on_worker is not None:
         await on_worker("identity", parts["identity"])
     identity = {"code": parts["identity"].code, "name": parts["identity"].name}

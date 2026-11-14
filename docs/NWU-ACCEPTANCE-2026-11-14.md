@@ -47,7 +47,7 @@ Earlier failed runs remain failures; they are not counted as successful imports.
 
 Manual review subsequently found an untested calendar defect: that draft used
 the general exam-period start as semester end. It is not a fully accepted draft.
-Acceptance now has 25 checks, including unknown semester/module-exam dates,
+Acceptance now has 26 checks, including unknown semester/module-exam dates,
 the explicit recess range and exam duration. Calendar extraction requires a verbatim block anchor with an explicit
 semester-end label and matching date; missing/invalid support leaves the date
 blank with a review warning. Exam starts, last tests, invented quotes, wrong block
@@ -61,13 +61,18 @@ bounded provider schema recovery, batch splitting and grading repair. It passed
 24/25 checks and Studio's parser. Its remaining defect was the general exam-period
 start becoming a module exam date. That process started before the calendar-anchor
 fix; a current-worker run against its newly classified evidence is pending.
+Expanded review also found final-mark components represented as extra positively
+weighted assessments outside the participation plan. Semantic validation now
+rejects those orphan weights without rewriting them. Another run returned a typo
+in the module code; source verification now checks the literal code before grading
+and permits one evidence-based re-extraction, then fails closed if still unverified.
 No academic module
 was saved and no authenticated hosted import, OCR acceptance or browser recovery
 is claimed. Across the wider 19-document corpus, 14 normalized locally, three need
 unavailable local OCR, one disallows encrypted extraction, and one exceeds the
 existing page limit. Those limits were not bypassed.
 
-All 72 focused regression tests passed, covering calendar source anchors, review scope/expiry/key/origin,
+All 76 focused regression tests passed, covering source identity, unlinked weights, calendar source anchors, review scope/expiry/key/origin,
 bounded retries, evidence coverage/continuations, source links, grading budgets,
 validation, durable jobs and account isolation. See the companion Academiq change
 for `dataNote` persistence and review UI; existing Studio otherwise discarded those
