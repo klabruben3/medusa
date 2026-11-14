@@ -27,11 +27,54 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         blocks.add(json.dumps({"rows": rows}), 1, "table")
         result = sections([{"blocks": blocks.items}], max_bytes=600)
         found = []
+        chunks = []
         for block in result:
             section_rows = json.loads(block["content"])["rows"]
             self.assertEqual(section_rows[0], rows[0])
-            found.extend(section_rows[1:])
+            chunks.append(section_rows)
+            tail = section_rows[1:]
+            if found and tail and tail[0] == found[-1]:
+                tail = tail[1:]  # One source row provides boundary context.
+            found.extend(tail)
+            self.assertLessEqual(len(block["content"].encode()), 600)
         self.assertEqual(found, rows[1:])
+        for previous, following in zip(rows[1:], rows[2:]):
+            self.assertTrue(any(previous in chunk and following in chunk for chunk in chunks),
+                            "A timetable date row must stay with its continuation at a split")
+
+    async def test_course_year_heading_reaches_grading_and_calendar(self):
+        from app.utils.documents import Blocks
+        blocks = Blocks("schedule.pdf")
+        blocks.add("ABC123 2026", 1, "heading")
+        blocks.add("\n".join(f"Test {i} on a stated course date." for i in range(200)), 1, "paragraph")
+        async def classify(client, batch):
+            return [{"purpose": "identity" if block["type"] == "heading" else "grading",
+                     **{key: block[key] for key in ("id", "content", "source_file", "page")}}
+                    for block in batch]
+        with patch("app.ai.evidence.extract_batch", side_effect=classify):
+            contexts, _ = await collect_evidence(None, [{"blocks": blocks.items}])
+        for purpose in ("identity", "grading", "calendar"):
+            heading = [block for block in contexts[purpose] if block["content"] == "ABC123 2026"]
+            self.assertEqual(len(heading), 1, purpose)
+            self.assertEqual((heading[0]["source_file"], heading[0]["page"]), ("schedule.pdf", 1))
+
+    async def test_table_size_retry_preserves_continuation_context(self):
+        rows = [["Date", "Assessment"]] + [[str(i), f"Test {i}"] for i in range(8)]
+        block = {"id": "table", "type": "table", "content": json.dumps({"rows": rows}),
+                 "source_file": "schedule.pdf", "page": 1}
+        calls = []
+        async def answer(client, purpose, messages, schema, output_tokens):
+            batch = json.loads(messages[1]["content"])
+            calls.append(batch)
+            if len(calls) == 1:
+                return response({}, finish="length")
+            return response({"decisions": [{"blockId": item["id"], "purposes": ["grading"]} for item in batch]})
+        with patch("app.ai.evidence.complete", side_effect=answer):
+            facts = await extract_batch(None, [block])
+        chunks = [json.loads(item["content"])["rows"] for item in facts]
+        self.assertEqual(len(calls), 3)
+        for previous, following in zip(rows[1:], rows[2:]):
+            self.assertTrue(any(any(a == previous and b == following for a, b in zip(chunk[1:], chunk[2:])) for chunk in chunks))
 
     async def test_every_section_is_read_without_embeddings(self):
         reviewed = []

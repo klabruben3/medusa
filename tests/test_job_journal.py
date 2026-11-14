@@ -38,6 +38,7 @@ class JournalTests(unittest.IsolatedAsyncioTestCase):
                 body = response.json()
                 self.assertEqual(body["service"], "academiq-api")
                 self.assertEqual(body["documentJournalVersion"], 1)
+                self.assertEqual(body["documentEvidenceVersion"], 1)
                 self.assertIs(body["durableJobsEnabled"], expected)
 
     async def test_disabled_configuration_preserves_the_existing_processing_path(self):

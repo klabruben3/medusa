@@ -57,10 +57,16 @@ def sections(sources, max_bytes=4500):
                     if len(json.dumps({"rows": candidate}, ensure_ascii=False).encode()) > max_bytes:
                         if len(group) <= 1:
                             raise DocumentError("A table row is too large for reliable extraction. Split the table into narrower columns.", 413, "table_row_too_large")
+                        previous = group[-1]
                         append_table(group)
                         group = [header, row]
                         if len(json.dumps({"rows": group}, ensure_ascii=False).encode()) > max_bytes:
                             raise DocumentError("A table row is too large for reliable extraction.", 413, "table_row_too_large")
+                        # Timetables often put a date on one row and the test in
+                        # its continuation. Preserve their adjacency when bounded.
+                        overlap = [header, previous, row]
+                        if len(json.dumps({"rows": overlap}, ensure_ascii=False).encode()) <= max_bytes:
+                            group = overlap
                     else:
                         group = candidate
                 if group:
@@ -129,12 +135,12 @@ async def extract_batch(client, blocks, depth=0):
             except (ValueError, KeyError, TypeError):
                 rows = None
             if rows:
-                if len(rows) <= 2:
+                if len(rows) <= 4:
                     return await extract_batch(client, blocks, depth + 1)
                 midpoint = 1 + (len(rows) - 1) // 2
                 halves = [[{**block, "id": block["id"] + suffix,
                             "content": json.dumps({"rows": subset}, ensure_ascii=False)}]
-                          for suffix, subset in [("a", rows[:midpoint]), ("b", [rows[0]] + rows[midpoint:])]]
+                          for suffix, subset in [("a", rows[:midpoint]), ("b", [rows[0]] + rows[midpoint - 1:])]]
                 facts = []
                 for half in halves:
                     facts.extend(await extract_batch(client, half, depth + 1))
@@ -179,8 +185,14 @@ async def collect_evidence(client, sources):
     code_pattern = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2,}[- ]?\d{2,}[A-Z]?(?![A-Za-z0-9])")
     for block in all_sections:
         if code_pattern.search(block["content"]):
-            key = ("identity", block["source_file"], block["page"], block["content"])
-            if key not in seen:
-                seen.add(key)
-                contexts["identity"].append(block)
+            purposes = ["identity"]
+            # A source title supplies the year for short dates in its tables.
+            # Copy the original heading, not a model-inferred upload-year default.
+            if block.get("type") == "heading" and re.search(r"\b(?:19|20)\d{2}\b", block["content"]):
+                purposes = list(contexts)
+            for purpose in purposes:
+                key = (purpose, block["source_file"], block["page"], block["content"])
+                if key not in seen:
+                    seen.add(key)
+                    contexts[purpose].append(block)
     return contexts, ["Every document section was submitted for evidence extraction. Review source references: model extraction can still omit or misinterpret facts."]
